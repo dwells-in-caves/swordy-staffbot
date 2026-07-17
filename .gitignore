@@ -1,0 +1,11 @@
+# IDE Files
+.idea
+
+# Environment
+.env
+
+# Build
+/target
+
+# Data
+*.db

@@ -1,0 +1,26 @@
+[
+  {
+    "day": 0,
+    "title": "Server Launch",
+    "message": "Welcome! Focus your early gems on unlocking your first hero slot.",
+    "notice_days": [0]
+  },
+  {
+    "day": 3,
+    "title": "First Guild War",
+    "message": "Save at least 200 gems and hold your summon tickets \u2014 the war shop restocks today and the early buys give the best value.",
+    "notice_days": [2, 0]
+  },
+  {
+    "day": 7,
+    "title": "Tower of Trials Opens",
+    "message": "Bank your energy potions starting now. Do NOT auto-spend energy this week; you'll want a full stockpile for the day-7 climb.",
+    "notice_days": [3, 1, 0]
+  },
+  {
+    "day": 14,
+    "title": "Limited Hero Banner",
+    "message": "Keep 300+ summon shards in reserve for the two-week banner. Reminder to not spend shards on the standard pool before this.",
+    "notice_days": [5, 1, 0]
+  }
+]
