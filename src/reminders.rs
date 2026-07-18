@@ -123,59 +123,97 @@ pub fn format_batch(reminders: &[Reminder]) -> String {
         .join("\n\n")
 }
 
-/// An event that hasn't happened yet for an anchored channel, with how far off
-/// it is. Borrows the source event so the caller can render title/level/power.
+/// An event that hasn't opened yet for an anchored channel, with the precise
+/// time until it opens. Borrows the source event so the caller can render
+/// title/level/power.
 #[derive(Debug, Clone)]
 pub struct Upcoming<'a> {
-    /// Whole days from `now` until the event opens (0 == today).
-    pub days_until: i64,
+    /// Time from `now` until the event opens. Always strictly positive.
+    pub until: Duration,
     /// Day-within-season the event occurs on.
     pub day: i64,
-    /// Calendar date the event opens.
-    pub date: NaiveDate,
+    /// Exact UTC datetime the event opens (season origin + day, at notify time).
+    pub event_dt: DateTime<Utc>,
     pub event: &'a Event,
 }
 
-/// The next `limit` events in `season` that occur today or later, earliest
-/// first. Events on the same day keep a stable order by title. Only the
+/// The next `limit` events in `season` that open strictly after `now`, soonest
+/// first. Events at the same instant keep a stable order by title. Only the
 /// channel's anchored season is considered.
+///
+/// Unlike the scheduled-reminder path (which labels each reminder by its whole
+/// notice-day offset), this is a live "how far away is it" query, so it works
+/// in real datetimes: an event opens at `season_start + day` at the channel's
+/// `notify` time, and the delta from `now` is kept intact for days+hours
+/// display. `notify` is therefore required here.
 pub fn upcoming_events<'a>(
     season: &str,
     season_start: NaiveDate,
+    notify: NaiveTime,
     now: DateTime<Utc>,
     events: &'a [Event],
     limit: usize,
 ) -> Vec<Upcoming<'a>> {
-    let today = current_day_in_season(season_start, now);
     let mut items: Vec<Upcoming<'a>> = events
         .iter()
-        .filter(|e| e.season == season && e.day >= today)
-        .map(|e| Upcoming {
-            days_until: e.day - today,
-            day: e.day,
-            date: season_start + Duration::days(e.day),
-            event: e,
+        .filter(|e| e.season == season)
+        .filter_map(|e| {
+            let event_dt =
+                Utc.from_utc_datetime(&(season_start + Duration::days(e.day)).and_time(notify));
+            let until = event_dt - now;
+            // Skip events that have already opened (time-aware boundary: an
+            // event earlier *today* than `now` is in the past, not upcoming).
+            if until <= Duration::zero() {
+                return None;
+            }
+            Some(Upcoming {
+                until,
+                day: e.day,
+                event_dt,
+                event: e,
+            })
         })
         .collect();
-    items.sort_by(|a, b| a.day.cmp(&b.day).then_with(|| a.event.title.cmp(&b.event.title)));
+    items.sort_by(|a, b| {
+        a.event_dt
+            .cmp(&b.event_dt)
+            .then_with(|| a.event.title.cmp(&b.event.title))
+    });
     items.truncate(limit);
     items
 }
 
-/// Render one upcoming event: timing + season day + date, then the event's
-/// own headline and requirement lines.
+fn plural(n: i64) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+/// Render a strictly-positive duration as days + hours: "5 days 7 hours",
+/// "7 hours", "1 day", or "under an hour". Hours are floored (countdown-style).
+pub fn humanize_until(delta: Duration) -> String {
+    let minutes = delta.num_minutes().max(0);
+    let days = minutes / (24 * 60);
+    let hours = (minutes % (24 * 60)) / 60;
+    match (days, hours) {
+        (0, 0) => "under an hour".to_string(),
+        (0, h) => format!("{h} hour{}", plural(h)),
+        (d, 0) => format!("{d} day{}", plural(d)),
+        (d, h) => format!("{d} day{} {h} hour{}", plural(d), plural(h)),
+    }
+}
+
+/// Render one upcoming event: precise time-until + season day + open datetime,
+/// then the event's own headline and requirement lines.
 pub fn format_upcoming(u: &Upcoming<'_>) -> String {
-    let when = match u.days_until {
-        0 => "Today".to_string(),
-        1 => "Tomorrow".to_string(),
-        n => format!("In {n} days"),
-    };
     let mut s = format!(
-        "**{} \u{00B7} {} Day {}** ({})\n{}",
-        when,
+        "**In {} \u{00B7} {} Day {}** ({} UTC)\n{}",
+        humanize_until(u.until),
         u.event.season,
         u.day,
-        u.date.format("%Y-%m-%d"),
+        u.event_dt.format("%Y-%m-%d %H:%M"),
         u.event.headline()
     );
     let detail = u.event.detail();
@@ -288,21 +326,43 @@ mod tests {
 
     #[test]
     fn upcoming_lists_future_events_in_order() {
-        // Mar 11 with a Mar 1 origin => currently day 10.
-        let now = dt(2026, 3, 11, 12, 0);
+        // Mar 1 origin, notify 00:00. day15 opens Mar 16 00:00, day28 Mar 29 00:00.
+        // "Now" is Mar 13 10:00 UTC.
+        let now = dt(2026, 3, 13, 10, 0);
         let sched = schedule(); // outlive the borrowed Upcoming values
-        let all = upcoming_events("S3", start(), now, &sched, 5);
-        // day 1 is in the past; day 15 and day 28 remain, earliest first.
+        let all = upcoming_events("S3", start(), notify(), now, &sched, 5);
+        // day 1 (Mar 2) already opened; day 15 and day 28 remain, soonest first.
         assert_eq!(all.iter().map(|u| u.day).collect::<Vec<_>>(), vec![15, 28]);
         assert!(all.iter().all(|u| u.event.season == "S3")); // S2 excluded
-        assert_eq!(all[0].days_until, 5);
-        assert_eq!(all[0].date, NaiveDate::from_ymd_opt(2026, 3, 16).unwrap());
+        assert_eq!(all[0].event_dt, dt(2026, 3, 16, 0, 0));
+        // Mar 13 10:00 -> Mar 16 00:00 is 2 days 14 hours.
+        assert!(format_upcoming(&all[0]).contains("In 2 days 14 hours \u{00B7} S3 Day 15"));
 
         // Default single-event case respects the limit.
-        let one = upcoming_events("S3", start(), now, &sched, 1);
+        let one = upcoming_events("S3", start(), notify(), now, &sched, 1);
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].day, 15);
-        assert!(format_upcoming(&one[0]).contains("In 5 days \u{00B7} S3 Day 15"));
+    }
+
+    #[test]
+    fn humanize_covers_days_hours_and_edges() {
+        assert_eq!(humanize_until(Duration::hours(24 * 5 + 7)), "5 days 7 hours");
+        assert_eq!(humanize_until(Duration::hours(7)), "7 hours");
+        assert_eq!(humanize_until(Duration::hours(1)), "1 hour");
+        assert_eq!(humanize_until(Duration::days(3)), "3 days"); // exact -> no hours
+        assert_eq!(humanize_until(Duration::days(1)), "1 day");
+        assert_eq!(humanize_until(Duration::minutes(30)), "under an hour");
+    }
+
+    #[test]
+    fn same_day_already_opened_is_excluded() {
+        // day15 opens Mar 16 00:00; at Mar 16 09:00 it's already open -> gone.
+        let now = dt(2026, 3, 16, 9, 0);
+        let sched = schedule();
+        let up = upcoming_events("S3", start(), notify(), now, &sched, 5);
+        assert!(up.iter().all(|u| u.day != 15));
+        // day28 (Mar 29) is still ahead.
+        assert!(up.iter().any(|u| u.day == 28));
     }
 
     #[test]
@@ -310,6 +370,6 @@ mod tests {
         // Far past the last S3 event (day 28) => nothing upcoming.
         let now = dt(2026, 6, 1, 0, 0);
         let sched = schedule();
-        assert!(upcoming_events("S3", start(), now, &sched, 5).is_empty());
+        assert!(upcoming_events("S3", start(), notify(), now, &sched, 5).is_empty());
     }
 }

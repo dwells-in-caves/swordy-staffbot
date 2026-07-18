@@ -270,7 +270,7 @@ pub async fn next(
         }
     };
 
-    let items = upcoming_events(&season, start, now, &events, want);
+    let items = upcoming_events(&season, start, row.notify_time_parsed(), now, &events, want);
     if items.is_empty() {
         ctx.say(format!(
             "No more events in **{season}** \u{2014} re-anchor when the next season starts."
