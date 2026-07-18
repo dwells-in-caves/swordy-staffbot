@@ -1,5 +1,6 @@
 //! Entry point for the Sword & Staff reminder bot.
 //!
+//! Run with: `cargo run`
 //! Requires DISCORD_TOKEN in the environment (see config.rs / .env.example).
 
 mod commands;
@@ -28,7 +29,7 @@ pub type Context<'a> = poise::Context<'a, Data, Error>;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-
+    // Honors RUST_LOG (e.g. RUST_LOG=info). Defaults to warn if unset.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -45,7 +46,8 @@ async fn main() -> anyhow::Result<()> {
     let database: Arc<Mutex<Connection>> = Arc::new(Mutex::new(conn));
 
     // Prefix commands need the privileged MESSAGE_CONTENT intent. Enable it in
-    // the Discord Developer Portal for this bot.
+    // the Discord Developer Portal for this bot. (Slash commands don't need it,
+    // so you could drop MESSAGE_CONTENT if you only want slash commands.)
     let intents =
         serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
 
@@ -72,13 +74,13 @@ async fn main() -> anyhow::Result<()> {
                 // iteration, register per-guild instead.)
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
-                // Kick off the background reminder loop.
+                // Kick off the background reminder loop. It only needs the HTTP
+                // client to post messages, so hand it a clone of that.
                 tokio::spawn(scheduler::run(
-                    ctx.clone(),
+                    ctx.http.clone(),
                     db_for_setup.clone(),
                     events_path.clone(),
                     interval,
-                    default_notify,
                 ));
 
                 Ok(Data {

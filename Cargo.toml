@@ -5,6 +5,10 @@ edition = "2024"
 description = "Discord reminder bot for the mobile game Sword & Staff"
 
 [dependencies]
+# Discord: poise is the command framework built on top of serenity. Choosing
+# poise means you also get the full serenity API underneath (via
+# poise::serenity_prelude). serenity's own standard_framework is deprecated as
+# of 0.12.1 in favour of poise.
 poise = "0.6"
 serenity = { version = "0.12", default-features = false, features = [
     "builder",
@@ -19,7 +23,12 @@ serenity = { version = "0.12", default-features = false, features = [
 ] }
 
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+
+# Persistence: rusqlite with the bundled SQLite (compiled from source, needs a
+# C compiler). Synchronous, which is fine at this scale; the scheduler only
+# touches the DB once per tick and commands are infrequent.
 rusqlite = { version = "0.31", features = ["bundled"] }
+
 chrono = { version = "0.4", features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

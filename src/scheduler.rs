@@ -1,96 +1,92 @@
-//! Background scheduler: a tokio task that wakes up on an interval and, for
-//! every subscribed channel, figures out which reminders are due and sends them.
+//! Background loop that checks each subscribed+anchored channel and sends any
+//! due reminders. Runs every `check_interval` seconds.
 //!
-//! Flow each tick:
-//!   1. Load the (small) event schedule once.
-//!   2. For each subscribed channel with a start date:
-//!        - expand its personal reminder timeline (compute_reminders)
-//!        - find reminders due since we last sent (due_and_next)
-//!        - post a single combined message if any are due
-//!        - persist last_sent_ts and next_ts so we never double-send and so
-//!          `status` can show the next reminder even across restarts.
+//! For each channel we recompute reminders for its anchored season from
+//! (season, start_date, notify_time), then send whatever is due since
+//! `last_sent`. `record_sent` advances the watermark so nothing repeats and
+//! missed reminders are caught up after downtime.
 //!
-//!
-//! Locking discipline mirrors commands.rs: the std `Mutex` guard is only ever
-//! held inside a sync `{ ... }` block, never across an `.await`.
+//! DB guard is always dropped before any `.await` (Discord send / sleep).
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::Duration as StdDuration;
 
-use chrono::{NaiveTime, Utc};
-use poise::serenity_prelude as serenity;
+use chrono::Utc;
 use rusqlite::Connection;
+use serenity::all::{ChannelId, Http};
+use tracing::{error, info, warn};
 
 use crate::db::{self, ChannelRow};
 use crate::events::load_events;
 use crate::reminders::{compute_reminders, due_and_next, format_batch};
 
-type Db = Arc<Mutex<Connection>>;
-
-/// Long-running loop. Spawn this with `tokio::spawn` once the bot is ready.
 pub async fn run(
-    ctx: serenity::Context,
-    db: Db,
+    http: Arc<Http>,
+    db: Arc<Mutex<Connection>>,
     events_path: String,
-    interval_secs: u64,
-    _default_notify: NaiveTime,
+    check_interval: u64,
 ) {
-    let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
-    tracing::info!("scheduler started (interval {interval_secs}s)");
+    info!(check_interval, "reminder scheduler started");
+    let mut ticker = tokio::time::interval(StdDuration::from_secs(check_interval.max(5)));
     loop {
         ticker.tick().await;
-        if let Err(e) = tick(&ctx, &db, &events_path).await {
-            tracing::error!("scheduler tick error: {e}");
+        if let Err(e) = tick(&http, &db, &events_path).await {
+            error!(error = %e, "scheduler tick failed");
         }
     }
 }
 
-async fn tick(ctx: &serenity::Context, db: &Db, events_path: &str) -> anyhow::Result<()> {
-    let now = Utc::now();
-
+async fn tick(
+    http: &Arc<Http>,
+    db: &Arc<Mutex<Connection>>,
+    events_path: &str,
+) -> anyhow::Result<()> {
     let events = match load_events(events_path) {
         Ok(e) => e,
         Err(e) => {
-            // A bad manual edit to events.json shouldn't kill the loop.
-            tracing::warn!("failed to load events: {e}");
+            warn!(error = %e, "could not load events this tick");
             return Ok(());
         }
     };
 
-    let channels: Vec<ChannelRow> = {
+    // Snapshot rows, then release the lock before awaiting on Discord.
+    let rows: Vec<ChannelRow> = {
         let conn = db.lock().unwrap();
         db::get_subscribed_channels(&conn)?
     };
 
-    for row in channels {
-        let Some(start) = row.start_date_parsed() else {
-            continue;
+    let now = Utc::now();
+    for row in rows {
+        let (Some(season), Some(start)) = (row.season.clone(), row.start_date_parsed()) else {
+            continue; // query guarantees these, but stay defensive
         };
-        let reminders = compute_reminders(start, row.notify_time_parsed(), &events);
+        let reminders =
+            compute_reminders(&season, start, row.notify_time_parsed(), &events);
         let (due, next) = due_and_next(&reminders, row.last_sent_parsed(), now);
 
         if due.is_empty() {
-            // Keep the cached next timestamp fresh even when nothing fires.
-            let next_str = next.map(|d| d.to_rfc3339());
-            if row.next_ts != next_str {
-                let conn = db.lock().unwrap();
-                db::set_next_ts(&conn, row.channel_id, next)?;
-            }
+            // Keep the stored "next" fresh for status output.
+            let conn = db.lock().unwrap();
+            let _ = db::set_next_ts(&conn, row.channel_id, next);
             continue;
         }
 
         let body = format_batch(&due);
-        let channel = serenity::ChannelId::new(row.channel_id as u64);
-        match channel.say(&ctx.http, body).await {
+        let channel = ChannelId::new(row.channel_id as u64);
+        match channel.say(http, body).await {
             Ok(_) => {
+                let latest = due.iter().map(|r| r.fire_dt).max().unwrap_or(now);
                 let conn = db.lock().unwrap();
-                db::record_sent(&conn, row.channel_id, now, next)?;
+                if let Err(e) = db::record_sent(&conn, row.channel_id, latest, next) {
+                    error!(error = %e, channel = row.channel_id, "failed to record send");
+                }
+                info!(channel = row.channel_id, count = due.len(), "sent reminders");
             }
             Err(e) => {
-                tracing::warn!("send failed for channel {}: {e}", row.channel_id);
+                // Don't advance the watermark; we'll retry next tick.
+                warn!(error = %e, channel = row.channel_id, "failed to send reminders");
             }
         }
     }
-
     Ok(())
 }
