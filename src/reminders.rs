@@ -123,6 +123,69 @@ pub fn format_batch(reminders: &[Reminder]) -> String {
         .join("\n\n")
 }
 
+/// An event that hasn't happened yet for an anchored channel, with how far off
+/// it is. Borrows the source event so the caller can render title/level/power.
+#[derive(Debug, Clone)]
+pub struct Upcoming<'a> {
+    /// Whole days from `now` until the event opens (0 == today).
+    pub days_until: i64,
+    /// Day-within-season the event occurs on.
+    pub day: i64,
+    /// Calendar date the event opens.
+    pub date: NaiveDate,
+    pub event: &'a Event,
+}
+
+/// The next `limit` events in `season` that occur today or later, earliest
+/// first. Events on the same day keep a stable order by title. Only the
+/// channel's anchored season is considered.
+pub fn upcoming_events<'a>(
+    season: &str,
+    season_start: NaiveDate,
+    now: DateTime<Utc>,
+    events: &'a [Event],
+    limit: usize,
+) -> Vec<Upcoming<'a>> {
+    let today = current_day_in_season(season_start, now);
+    let mut items: Vec<Upcoming<'a>> = events
+        .iter()
+        .filter(|e| e.season == season && e.day >= today)
+        .map(|e| Upcoming {
+            days_until: e.day - today,
+            day: e.day,
+            date: season_start + Duration::days(e.day),
+            event: e,
+        })
+        .collect();
+    items.sort_by(|a, b| a.day.cmp(&b.day).then_with(|| a.event.title.cmp(&b.event.title)));
+    items.truncate(limit);
+    items
+}
+
+/// Render one upcoming event: timing + season day + date, then the event's
+/// own headline and requirement lines.
+pub fn format_upcoming(u: &Upcoming<'_>) -> String {
+    let when = match u.days_until {
+        0 => "Today".to_string(),
+        1 => "Tomorrow".to_string(),
+        n => format!("In {n} days"),
+    };
+    let mut s = format!(
+        "**{} \u{00B7} {} Day {}** ({})\n{}",
+        when,
+        u.event.season,
+        u.day,
+        u.date.format("%Y-%m-%d"),
+        u.event.headline()
+    );
+    let detail = u.event.detail();
+    if !detail.is_empty() {
+        s.push('\n');
+        s.push_str(&detail);
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +284,32 @@ mod tests {
     #[test]
     fn day_in_season() {
         assert_eq!(current_day_in_season(start(), dt(2026, 3, 9, 6, 0)), 8);
+    }
+
+    #[test]
+    fn upcoming_lists_future_events_in_order() {
+        // Mar 11 with a Mar 1 origin => currently day 10.
+        let now = dt(2026, 3, 11, 12, 0);
+        let sched = schedule(); // outlive the borrowed Upcoming values
+        let all = upcoming_events("S3", start(), now, &sched, 5);
+        // day 1 is in the past; day 15 and day 28 remain, earliest first.
+        assert_eq!(all.iter().map(|u| u.day).collect::<Vec<_>>(), vec![15, 28]);
+        assert!(all.iter().all(|u| u.event.season == "S3")); // S2 excluded
+        assert_eq!(all[0].days_until, 5);
+        assert_eq!(all[0].date, NaiveDate::from_ymd_opt(2026, 3, 16).unwrap());
+
+        // Default single-event case respects the limit.
+        let one = upcoming_events("S3", start(), now, &sched, 1);
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].day, 15);
+        assert!(format_upcoming(&one[0]).contains("In 5 days \u{00B7} S3 Day 15"));
+    }
+
+    #[test]
+    fn upcoming_empty_when_season_finished() {
+        // Far past the last S3 event (day 28) => nothing upcoming.
+        let now = dt(2026, 6, 1, 0, 0);
+        let sched = schedule();
+        assert!(upcoming_events("S3", start(), now, &sched, 5).is_empty());
     }
 }

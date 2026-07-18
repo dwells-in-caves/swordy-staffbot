@@ -11,7 +11,9 @@
 use chrono::{Duration, NaiveDate, NaiveTime, Utc};
 
 use crate::events::{load_events, seasons};
-use crate::reminders::{compute_reminders, current_day_in_season, due_and_next};
+use crate::reminders::{
+    compute_reminders, current_day_in_season, due_and_next, format_upcoming, upcoming_events,
+};
 use crate::{db, Context, Error};
 
 fn ids(ctx: &Context<'_>) -> (i64, Option<i64>) {
@@ -92,7 +94,7 @@ pub async fn setseason(
         "\u{1F4C6} Anchored **{season}** to **{}**. This server is on **{season} day {day_now}**.",
         start.format("%Y-%m-%d")
     ))
-    .await?;
+        .await?;
     Ok(())
 }
 
@@ -122,7 +124,7 @@ pub async fn setday(
         "\u{1F4C6} Anchored **{season} day {day}** today (origin **{}**).",
         start.format("%Y-%m-%d")
     ))
-    .await?;
+        .await?;
     Ok(())
 }
 
@@ -229,6 +231,79 @@ pub async fn list_events(
     Ok(())
 }
 
+/// List upcoming events. `/next` shows the next one; `/next 3` shows three.
+#[poise::command(slash_command, prefix_command, guild_only)]
+pub async fn next(
+    ctx: Context<'_>,
+    #[description = "How many upcoming events to list (default 1)"] count: Option<u32>,
+) -> Result<(), Error> {
+    // Default to the next single event; clamp so one call can't blow past
+    // Discord's message limit.
+    let want = count.unwrap_or(1).clamp(1, 20) as usize;
+    let (channel_id, _) = ids(&ctx);
+    let prefix = ctx.prefix().to_string();
+    let events_path = ctx.data().events_path.clone();
+    let now = Utc::now();
+
+    let row = {
+        let conn = ctx.data().db.lock().unwrap();
+        db::get_channel(&conn, channel_id)?
+    };
+    let Some(row) = row else {
+        ctx.say(format!("This channel isn't set up yet. Try `{prefix}subscribe`."))
+            .await?;
+        return Ok(());
+    };
+    let (Some(season), Some(start)) = (row.season.clone(), row.start_date_parsed()) else {
+        ctx.say(format!(
+            "No season anchored yet \u{2014} set one with `{prefix}setday S3 20`."
+        ))
+            .await?;
+        return Ok(());
+    };
+
+    let events = match load_events(&events_path) {
+        Ok(e) => e,
+        Err(e) => {
+            ctx.say(format!("\u{274C} Couldn't read the schedule: {e}")).await?;
+            return Ok(());
+        }
+    };
+
+    let items = upcoming_events(&season, start, now, &events, want);
+    if items.is_empty() {
+        ctx.say(format!(
+            "No more events in **{season}** \u{2014} re-anchor when the next season starts."
+        ))
+            .await?;
+        return Ok(());
+    }
+
+    let header = if items.len() == 1 {
+        format!("**Next event** in {season}:")
+    } else {
+        format!("**Next {} events** in {season}:", items.len())
+    };
+
+    // Assemble within Discord's 2000-char limit; drop overflow with a note.
+    let mut out = header;
+    let mut shown = 0usize;
+    for u in &items {
+        let block = format!("\n\n{}", format_upcoming(u));
+        if out.len() + block.len() > 1900 {
+            break;
+        }
+        out.push_str(&block);
+        shown += 1;
+    }
+    if shown < items.len() {
+        out.push_str(&format!("\n\n\u{2026}and {} more.", items.len() - shown));
+    }
+
+    ctx.say(out).await?;
+    Ok(())
+}
+
 /// Send a sample reminder here to confirm I can post in this channel.
 #[poise::command(slash_command, prefix_command)]
 pub async fn test(ctx: Context<'_>) -> Result<(), Error> {
@@ -237,7 +312,7 @@ pub async fn test(ctx: Context<'_>) -> Result<(), Error> {
          \u{2022} Power to enter \u{2014} Normal 20M \u{00B7} Hard 26M \u{00B7} Nightmare 30M \u{00B7} Purgatory 46M\n\
          _(This is a test; real reminders fire on your schedule.)_",
     )
-    .await?;
+        .await?;
     Ok(())
 }
 
@@ -251,6 +326,7 @@ pub fn all() -> Vec<poise::Command<crate::Data, Error>> {
         notifytime(),
         status(),
         list_events(),
+        next(),
         test(),
     ]
 }
