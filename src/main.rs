@@ -9,6 +9,7 @@ mod db;
 mod events;
 mod reminders;
 mod scheduler;
+mod send_failure;
 
 use std::sync::{Arc, Mutex};
 

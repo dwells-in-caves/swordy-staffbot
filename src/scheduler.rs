@@ -19,6 +19,7 @@ use tracing::{error, info, warn};
 use crate::db::{self, ChannelRow};
 use crate::events::load_events;
 use crate::reminders::{compute_reminders, due_and_next, format_batch};
+use crate::send_failure;
 
 pub async fn run(
     http: Arc<Http>,
@@ -83,8 +84,8 @@ async fn tick(
                 info!(channel = row.channel_id, count = due.len(), "sent reminders");
             }
             Err(e) => {
-                // Don't advance the watermark; we'll retry next tick.
-                warn!(error = %e, channel = row.channel_id, "failed to send reminders");
+                let latest = due.iter().map(|r| r.fire_dt).max().unwrap_or(now);
+                send_failure::handle(db, row.channel_id, &e, latest, next);
             }
         }
     }
