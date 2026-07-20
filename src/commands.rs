@@ -11,9 +11,7 @@
 use chrono::{Duration, NaiveDate, NaiveTime, Utc};
 
 use crate::events::{load_events, seasons};
-use crate::reminders::{
-    compute_reminders, current_day_in_season, due_and_next, format_upcoming, upcoming_events,
-};
+use crate::reminders::{compute_reminders, current_day_in_season, due_and_next, format_upcoming, upcoming_events, CATCHUP_DAYS};
 use crate::{db, Context, Error};
 
 fn ids(ctx: &Context<'_>) -> (i64, Option<i64>) {
@@ -181,7 +179,7 @@ pub async fn status(ctx: Context<'_>) -> Result<(), Error> {
         lines.push(format!("**Current day:** {season} day {}", current_day_in_season(start, now)));
         if let Ok(events) = load_events(&events_path) {
             let rs = compute_reminders(&season, start, row.notify_time_parsed(), &events);
-            let (_, next) = due_and_next(&rs, row.last_sent_parsed(), now);
+            let next = due_and_next(&rs, row.last_sent_parsed(), now, Duration::days(CATCHUP_DAYS)).next;
             let next_str = next
                 .map(|d| format!("{} UTC", d.format("%Y-%m-%d %H:%M")))
                 .unwrap_or_else(|| "none left this season".into());

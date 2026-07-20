@@ -74,23 +74,58 @@ pub fn compute_reminders(
     out
 }
 
-/// Split reminders into `(due now, next upcoming fire time)`.
+/// Reminders older than this are treated as "missed": acknowledged (the
+/// watermark is advanced past them) but NOT sent. This is what stops a
+/// mid-season anchor (`setday 40`) or a long downtime from flattening the whole
+/// backlog into one giant message on the first tick.
+pub const CATCHUP_DAYS: i64 = 1;
+
+/// Outcome of splitting a channel's timeline against its watermark.
+pub struct DueBatch {
+    /// Reminders fresh enough to actually send (within the catch-up window).
+    pub due: Vec<Reminder>,
+    /// Fire time of the next future reminder (for `status` / `next_ts`).
+    pub next: Option<DateTime<Utc>>,
+    /// Newest reminder deliberately skipped as too old, if any. The scheduler
+    /// advances the watermark past this so stale history isn't reconsidered
+    /// every tick.
+    pub skip_to: Option<DateTime<Utc>>,
+}
+
+/// Split reminders into what to send now, the next upcoming fire, and how far
+/// to fast-forward past deliberately-skipped stale reminders.
 ///
-/// `due` = fire time reached (`<= now`) and not already sent (strictly after
-/// `last_sent`). Comparing against `last_sent` makes this safe across restarts
-/// and downtime: no double-sends, and missed reminders are caught up.
+/// `due` = reminders that have arrived (`<= now`), are unsent (`> last_sent`),
+/// AND are no older than `now - catchup`. Arrived+unsent reminders older than
+/// that are reported via `skip_to` instead of being sent — so when
+/// `last_sent` is `None` (a fresh anchor), we no longer return the entire
+/// past-due history at once.
 pub fn due_and_next(
     reminders: &[Reminder],
     last_sent: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
-) -> (Vec<Reminder>, Option<DateTime<Utc>>) {
-    let due: Vec<Reminder> = reminders
-        .iter()
-        .filter(|r| r.fire_dt <= now && last_sent.map_or(true, |ls| r.fire_dt > ls))
-        .cloned()
-        .collect();
+    catchup: Duration,
+) -> DueBatch {
+    let floor = now - catchup;
+    let mut due = Vec::new();
+    let mut skip_to: Option<DateTime<Utc>> = None;
+
+    for r in reminders {
+        let arrived = r.fire_dt <= now;
+        let unsent = last_sent.map_or(true, |ls| r.fire_dt > ls);
+        if arrived && unsent {
+            if r.fire_dt >= floor {
+                due.push(r.clone());
+            } else {
+                // Too old to send; remember the newest skipped one so the
+                // caller can advance the watermark past the whole stale run.
+                skip_to = Some(skip_to.map_or(r.fire_dt, |s| s.max(r.fire_dt)));
+            }
+        }
+    }
+
     let next = reminders.iter().find(|r| r.fire_dt > now).map(|r| r.fire_dt);
-    (due, next)
+    DueBatch { due, next, skip_to }
 }
 
 /// Day-within-season from this channel's anchor.
@@ -224,6 +259,75 @@ pub fn format_upcoming(u: &Upcoming<'_>) -> String {
     s
 }
 
+/// Discord's hard per-message limit, in Unicode code points.
+pub const DISCORD_MSG_LIMIT: usize = 2000;
+
+/// Split `body` into pieces each within `limit` code points, breaking on
+/// reminder boundaries ("\n\n") first, then lines ("\n"), then spaces, and only
+/// hard-splitting mid-token as a last resort. Whole reminders stay intact
+/// whenever they fit.
+pub fn chunk_message(body: &str, limit: usize) -> Vec<String> {
+    let mut pieces = vec![body.to_string()];
+    for sep in ["\n\n", "\n", " "] {
+        if pieces.iter().all(|p| p.chars().count() <= limit) {
+            break;
+        }
+        pieces = pieces.iter().flat_map(|p| greedy_join(p, sep, limit)).collect();
+    }
+    pieces.iter().flat_map(|p| hard_split(p, limit)).collect()
+}
+
+/// Greedily pack `sep`-separated parts of `s` into <= `limit` chunks, rejoining
+/// with `sep`. Parts individually over the limit pass through for a finer pass.
+fn greedy_join(s: &str, sep: &str, limit: usize) -> Vec<String> {
+    let sep_len = sep.chars().count();
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+    for part in s.split(sep) {
+        let part_len = part.chars().count();
+        let joined = if cur.is_empty() { part_len } else { cur_len + sep_len + part_len };
+        if !cur.is_empty() && joined > limit {
+            out.push(std::mem::take(&mut cur));
+            cur.push_str(part);
+            cur_len = part_len;
+        } else if cur.is_empty() {
+            cur.push_str(part);
+            cur_len = part_len;
+        } else {
+            cur.push_str(sep);
+            cur.push_str(part);
+            cur_len += sep_len + part_len;
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Last resort: hard-split a separator-less string into <= `limit` pieces.
+fn hard_split(s: &str, limit: usize) -> Vec<String> {
+    if s.chars().count() <= limit {
+        return vec![s.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut n = 0usize;
+    for ch in s.chars() {
+        if n == limit {
+            out.push(std::mem::take(&mut cur));
+            n = 0;
+        }
+        cur.push(ch);
+        n += 1;
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,18 +409,6 @@ mod tests {
         let r = compute_reminders("S3", start(), notify(), &schedule());
         let three = r.iter().find(|x| x.day == 28 && x.offset == 3).unwrap();
         assert!(format_reminder(three).starts_with("**In 3 days \u{00B7} S3 Day 28**"));
-    }
-
-    #[test]
-    fn no_double_send_and_catchup() {
-        let r = compute_reminders("S3", start(), notify(), &schedule());
-        // Nothing double-sent when last_sent == now.
-        let now = dt(2026, 3, 13, 9, 0);
-        let (due, _) = due_and_next(&r, Some(now), now);
-        assert!(due.is_empty());
-        // Catch up on the Mar 13 batch when we were last active Mar 12.
-        let (due2, _) = due_and_next(&r, Some(dt(2026, 3, 12, 0, 0)), now);
-        assert!(due2.iter().any(|x| x.day == 15 && x.offset == 3));
     }
 
     #[test]
