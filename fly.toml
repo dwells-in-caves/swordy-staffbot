@@ -1,0 +1,34 @@
+# Fly.io config for the Sword & Staff reminder bot.
+# This is a WORKER app: it holds an outbound Discord gateway connection and runs
+# a scheduler loop. It has no inbound HTTP, so there is no [http_service] block.
+#
+# One-time setup (see the notes I gave you):
+#   flyctl apps create <your-app-name>
+#   flyctl volumes create ssbot_data --size 1 --region <region>
+#   flyctl secrets set DISCORD_TOKEN=xxxxxxxx
+
+app = "ssbot"            # <-- change to your globally-unique Fly app name
+primary_region = "iad"   # <-- change to your preferred region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SS_EVENTS_PATH = "/app/events.json"
+  SS_DB_PATH = "/data/ssbot.db"        # persisted on the volume below
+  SS_CHECK_INTERVAL = "60"
+  SS_DEFAULT_NOTIFY_TIME = "13:00"     # UTC; matches your 13:00 daily reset
+  RUST_LOG = "info"
+
+# Persistent SQLite lives here. The volume survives deploys and restarts, which
+# is what makes subscriptions, anchors, and the no-double-send watermarks stick.
+[mounts]
+  source = "ssbot_data"
+  destination = "/data"
+
+# IMPORTANT: run EXACTLY ONE machine. Two instances would each open the gateway
+# and each fire the scheduler, double-sending every reminder. A single volume
+# already pins you to one machine; don't `scale count` above 1.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"       # bump to 512mb if you ever see OOM in the logs
