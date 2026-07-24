@@ -1,4 +1,3 @@
-# Keep the build context small and secrets out of the image.
 target/
 .git/
 .github/

@@ -11,10 +11,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Gate the deploy on a real build + the unit tests. Note: this is effectively
-  # the FIRST full compile of the Discord layer (commands/scheduler/main) on a
-  # toolchain new enough for edition 2024 — watch this job on the first run.
-  # Remove this job (and `needs: test` below) if you want deploy-only.
   test:
     runs-on: ubuntu-latest
     steps:
