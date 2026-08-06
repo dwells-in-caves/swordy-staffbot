@@ -1,9 +1,5 @@
 //! Pure scheduling logic for the Sword & Staff reminder bot.
 //!
-//! This module has NO Discord dependency on purpose: everything here is plain
-//! data in / data out, so it can be unit-tested and reasoned about in isolation
-//! (see the `#[cfg(test)]` block at the bottom).
-//!
 //! Core idea: events are defined by *day number since a server opened*
 //! (day 0 = launch day). Each subscribed channel records the real-world date
 //! its server opened (`start`). For that channel, an event on day D happens on
@@ -68,9 +64,9 @@ pub fn compute_reminders(start: NaiveDate, notify: NaiveTime, events: &[Event]) 
 
 /// Split reminders into `(due now, next upcoming fire time)`.
 ///
-/// `due` = reminders whose fire time has arrived (`<= now`) but which we have
-/// not already sent (fire time strictly after `last_sent`). Comparing against
-/// `last_sent` is what makes this safe across restarts and downtime
+/// `due` = reminders whose fire time has arrived (`<= now`) but have not
+/// already been sent (fire time strictly after `last_sent`). Comparing
+/// against `last_sent` makes this safe across restarts and downtime.
 pub fn due_and_next(
     reminders: &[Reminder],
     last_sent: Option<DateTime<Utc>>,

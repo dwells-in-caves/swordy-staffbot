@@ -4,11 +4,12 @@
 //! Flow each tick:
 //!   1. Load the (small) event schedule once.
 //!   2. For each subscribed channel with a start date:
-//!        - expand its personal reminder timeline (compute_reminders)
-//!        - find reminders due since we last sent (due_and_next)
-//!        - post a single combined message if any are due
-//!        - persist last_sent_ts and next_ts so we never double-send and so
-//!          `status` can show the next reminder even across restarts.
+//!        - Expand its personal reminder timeline (compute_reminders)
+//!        - Find reminders due since the last sending (due_and_next)
+//!        - Post a single combined message if any are due
+//!        - Persist last_sent_ts and next_ts so reminders are never sent
+//!          twice and so `status` can show the next reminder even across
+//!          restarts.
 //!
 //!
 //! Locking discipline mirrors commands.rs: the std `Mutex` guard is only ever
