@@ -1,0 +1,13 @@
+target/
+.git/
+.github/
+*.db
+*.db-journal
+*.db-wal
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore
+fly.toml
+README.md

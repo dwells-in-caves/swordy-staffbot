@@ -1,18 +1,30 @@
 //! Bot commands, defined with poise so each one is both a prefix command and a
 //! slash command from a single function.
 //!
-//! Admin-only commands use poise's `required_permissions = "MANAGE_GUILD"`.
+//! Season model: a channel is anchored to one season at a time via
+//! `setseason`/`setday`. Admin-only commands use `required_permissions`.
+//!
+//! Locking: `Data::db` is a std `Mutex`; every DB critical section is kept in a
+//! `{ ... }` block so the guard is dropped before any `.await`.
 
 use chrono::{Duration, NaiveDate, NaiveTime, Utc};
 
-use crate::events::load_events;
-use crate::reminders::{compute_reminders, current_day_number, due_and_next};
+use crate::events::{load_events, seasons};
+use crate::reminders::{compute_reminders, current_day_in_season, due_and_next, format_upcoming, upcoming_events, CATCHUP_DAYS};
 use crate::{db, Context, Error};
 
 fn ids(ctx: &Context<'_>) -> (i64, Option<i64>) {
-    let channel_id = ctx.channel_id().get() as i64;
-    let guild_id = ctx.guild_id().map(|g| g.get() as i64);
-    (channel_id, guild_id)
+    (
+        ctx.channel_id().get() as i64,
+        ctx.guild_id().map(|g| g.get() as i64),
+    )
+}
+
+/// Normalize "s3" -> "S3" and confirm it exists in the schedule.
+fn resolve_season(ctx: &Context<'_>, raw: &str) -> Result<Option<String>, Error> {
+    let events = load_events(&ctx.data().events_path)?;
+    let wanted = raw.trim().to_uppercase();
+    Ok(seasons(&events).into_iter().find(|s| s.to_uppercase() == wanted))
 }
 
 /// Subscribe this channel to Sword & Staff reminders.
@@ -20,27 +32,27 @@ fn ids(ctx: &Context<'_>) -> (i64, Option<i64>) {
 pub async fn subscribe(ctx: Context<'_>) -> Result<(), Error> {
     let (channel_id, guild_id) = ids(&ctx);
     let prefix = ctx.prefix().to_string();
-
-    let msg = {
+    let anchored = {
         let conn = ctx.data().db.lock().unwrap();
         db::upsert_subscription(&conn, channel_id, guild_id)?;
-        let row = db::get_channel(&conn, channel_id)?;
-        match row {
-            Some(r) if r.start_date.is_some() => {
-                "\u{2705} Subscribed. Reminders are active for this channel.".to_string()
-            }
-            _ => format!(
-                "\u{2705} Subscribed. Now set your server's open date with \
-                 `{prefix}setstart YYYY-MM-DD` or `{prefix}setday N` so I know \
-                 which day this server is on."
-            ),
-        }
+        db::get_channel(&conn, channel_id)?
+            .map(|r| r.season.is_some() && r.start_date.is_some())
+            .unwrap_or(false)
+    };
+    let msg = if anchored {
+        "\u{2705} Subscribed. Reminders are active for this channel.".to_string()
+    } else {
+        format!(
+            "\u{2705} Subscribed. Now anchor this server's current season with \
+             `{prefix}setday S3 20` (\"we're on S3 day 20 today\") or \
+             `{prefix}setseason S3 2026-03-01` (the season's start / Telescope Date)."
+        )
     };
     ctx.say(msg).await?;
     Ok(())
 }
 
-/// Stop reminders in this channel (keeps your start date for later).
+/// Stop reminders in this channel (keeps your season anchor).
 #[poise::command(slash_command, prefix_command, required_permissions = "MANAGE_GUILD")]
 pub async fn unsubscribe(ctx: Context<'_>) -> Result<(), Error> {
     let (channel_id, _) = ids(&ctx);
@@ -48,62 +60,68 @@ pub async fn unsubscribe(ctx: Context<'_>) -> Result<(), Error> {
         let conn = ctx.data().db.lock().unwrap();
         db::set_subscribed(&conn, channel_id, false)?;
     }
-    ctx.say("\u{1F515} Unsubscribed. Your start date is kept in case you re-subscribe.")
+    ctx.say("\u{1F515} Unsubscribed. Your season anchor is kept in case you re-subscribe.")
         .await?;
     Ok(())
 }
 
-/// Set the server's open date, e.g. `/setstart 2026-01-15`.
+/// Anchor the current season by its start date, e.g. `/setseason S3 2026-03-01`.
 #[poise::command(slash_command, prefix_command, required_permissions = "MANAGE_GUILD")]
-pub async fn setstart(
+pub async fn setseason(
     ctx: Context<'_>,
-    #[description = "Server open date as YYYY-MM-DD"] date: String,
+    #[description = "Season label, e.g. S3"] season: String,
+    #[description = "Season start / Telescope Date, YYYY-MM-DD"] date: String,
 ) -> Result<(), Error> {
-    let start = match NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d") {
-        Ok(d) => d,
-        Err(_) => {
-            ctx.say("\u{274C} Please use the format `YYYY-MM-DD`, e.g. `2026-01-15`.")
-                .await?;
-            return Ok(());
-        }
+    let Some(season) = resolve_season(&ctx, &season)? else {
+        ctx.say("\u{274C} Unknown season. Use one of the labels from the schedule, e.g. `S1`\u{2013}`S5`.")
+            .await?;
+        return Ok(());
+    };
+    let Ok(start) = NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d") else {
+        ctx.say("\u{274C} Please use `YYYY-MM-DD`, e.g. `2026-03-01`.").await?;
+        return Ok(());
     };
     let (channel_id, guild_id) = ids(&ctx);
     {
         let conn = ctx.data().db.lock().unwrap();
-        db::set_start_date(&conn, channel_id, guild_id, start)?;
+        db::set_season_anchor(&conn, channel_id, guild_id, &season, start)?;
     }
-    let day_now = current_day_number(start, Utc::now());
+    let day_now = current_day_in_season(start, Utc::now());
     ctx.say(format!(
-        "\u{1F4C6} Server open date set to **{}**. This server is currently on **day {}**.",
-        start.format("%Y-%m-%d"),
-        day_now
+        "\u{1F4C6} Anchored **{season}** to **{}**. This server is on **{season} day {day_now}**.",
+        start.format("%Y-%m-%d")
     ))
-    .await?;
+        .await?;
     Ok(())
 }
 
-/// Shortcut: tell me what day the server is on right now, e.g. `/setday 12`.
+/// Shortcut: "the server is on this season + day right now", e.g. `/setday S3 20`.
 #[poise::command(slash_command, prefix_command, required_permissions = "MANAGE_GUILD")]
 pub async fn setday(
     ctx: Context<'_>,
-    #[description = "The day number the server is on today"] day: i64,
+    #[description = "Season label, e.g. S3"] season: String,
+    #[description = "Current day within that season"] day: i64,
 ) -> Result<(), Error> {
+    let Some(season) = resolve_season(&ctx, &season)? else {
+        ctx.say("\u{274C} Unknown season. Use e.g. `S1`\u{2013}`S5`.").await?;
+        return Ok(());
+    };
     if day < 0 {
         ctx.say("\u{274C} Day must be 0 or greater.").await?;
         return Ok(());
     }
+    // season_start is the day-0 origin, so today = start + day => start = today - day.
     let start = Utc::now().date_naive() - Duration::days(day);
     let (channel_id, guild_id) = ids(&ctx);
     {
         let conn = ctx.data().db.lock().unwrap();
-        db::set_start_date(&conn, channel_id, guild_id, start)?;
+        db::set_season_anchor(&conn, channel_id, guild_id, &season, start)?;
     }
     ctx.say(format!(
-        "\u{1F4C6} Got it \u{2014} treating today as **day {}** (server open date **{}**).",
-        day,
+        "\u{1F4C6} Anchored **{season} day {day}** today (origin **{}**).",
         start.format("%Y-%m-%d")
     ))
-    .await?;
+        .await?;
     Ok(())
 }
 
@@ -113,24 +131,17 @@ pub async fn notifytime(
     ctx: Context<'_>,
     #[description = "Time of day in 24h UTC, HH:MM"] hhmm: String,
 ) -> Result<(), Error> {
-    let t = match NaiveTime::parse_from_str(hhmm.trim(), "%H:%M") {
-        Ok(t) => t,
-        Err(_) => {
-            ctx.say("\u{274C} Please use 24h `HH:MM` UTC, e.g. `13:30`.")
-                .await?;
-            return Ok(());
-        }
+    let Ok(t) = NaiveTime::parse_from_str(hhmm.trim(), "%H:%M") else {
+        ctx.say("\u{274C} Please use 24h `HH:MM` UTC, e.g. `13:30`.").await?;
+        return Ok(());
     };
     let (channel_id, _) = ids(&ctx);
     {
         let conn = ctx.data().db.lock().unwrap();
         db::set_notify_time(&conn, channel_id, t)?;
     }
-    ctx.say(format!(
-        "\u{23F0} Reminders will send around **{} UTC**.",
-        hhmm.trim()
-    ))
-    .await?;
+    ctx.say(format!("\u{23F0} Reminders will send around **{} UTC**.", hhmm.trim()))
+        .await?;
     Ok(())
 }
 
@@ -146,73 +157,147 @@ pub async fn status(ctx: Context<'_>) -> Result<(), Error> {
         let conn = ctx.data().db.lock().unwrap();
         db::get_channel(&conn, channel_id)?
     };
-
     let Some(row) = row else {
-        ctx.say(format!(
-            "This channel isn't set up yet. Try `{prefix}subscribe`."
-        ))
-        .await?;
+        ctx.say(format!("This channel isn't set up yet. Try `{prefix}subscribe`."))
+            .await?;
         return Ok(());
     };
 
     let mut lines = vec![
         format!("**Subscribed:** {}", if row.subscribed { "yes" } else { "no" }),
+        format!("**Season:** {}", row.season.clone().unwrap_or_else(|| "not set".into())),
         format!(
-            "**Server open date:** {}",
-            row.start_date.clone().unwrap_or_else(|| "not set".to_string())
+            "**Season origin (Telescope Date):** {}",
+            row.start_date.clone().unwrap_or_else(|| "not set".into())
         ),
         format!("**Notify time (UTC):** {}", row.notify_time),
         format!("**Current UTC time:** {}", now.format("%Y-%m-%d %H:%M")),
     ];
 
-    if let Some(start) = row.start_date_parsed() {
-        lines.push(format!("**Current server day:** {}", current_day_number(start, now)));
-        // Loading events can fail if the file is edited badly; don't crash the command.
+    if let (Some(season), Some(start)) = (row.season.clone(), row.start_date_parsed()) {
+        lines.push(format!("**Current day:** {season} day {}", current_day_in_season(start, now)));
         if let Ok(events) = load_events(&events_path) {
-            let reminders = compute_reminders(start, row.notify_time_parsed(), &events);
-            let (_, next) = due_and_next(&reminders, row.last_sent_parsed(), now);
+            let rs = compute_reminders(&season, start, row.notify_time_parsed(), &events);
+            let next = due_and_next(&rs, row.last_sent_parsed(), now, Duration::days(CATCHUP_DAYS)).next;
             let next_str = next
                 .map(|d| format!("{} UTC", d.format("%Y-%m-%d %H:%M")))
-                .unwrap_or_else(|| "none scheduled".to_string());
+                .unwrap_or_else(|| "none left this season".into());
             lines.push(format!("**Next reminder:** {next_str}"));
         }
     }
-
     ctx.say(lines.join("\n")).await?;
     Ok(())
 }
 
-/// List the configured event schedule.
+/// List the schedule. With no season, shows a summary; with one, lists it.
 #[poise::command(slash_command, prefix_command, rename = "events")]
-pub async fn list_events(ctx: Context<'_>) -> Result<(), Error> {
-    let events_path = ctx.data().events_path.clone();
-    let mut events = match load_events(&events_path) {
+pub async fn list_events(
+    ctx: Context<'_>,
+    #[description = "Optional season to list, e.g. S3"] season: Option<String>,
+) -> Result<(), Error> {
+    let events = match load_events(&ctx.data().events_path) {
         Ok(e) => e,
         Err(e) => {
-            ctx.say(format!("\u{274C} Couldn't read the event schedule: {e}"))
-                .await?;
+            ctx.say(format!("\u{274C} Couldn't read the schedule: {e}")).await?;
             return Ok(());
         }
     };
-    events.sort_by_key(|e| e.day);
 
-    let mut lines = vec!["**Sword & Staff event schedule** (by day since server open):".to_string()];
-    for ev in &events {
-        let notices = if ev.notice_days.is_empty() {
-            "day-of".to_string()
-        } else {
-            ev.notice_days
-                .iter()
-                .map(|&n| if n == 0 { "day-of".to_string() } else { format!("-{n}d") })
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        lines.push(format!(
-            "\u{2022} **Day {} \u{2014} {}** _(reminds: {})_",
-            ev.day, ev.title, notices
-        ));
+    let msg = match season.and_then(|s| resolve_season(&ctx, &s).ok().flatten()) {
+        Some(season) => {
+            let mut evs: Vec<_> = events.iter().filter(|e| e.season == season).collect();
+            evs.sort_by_key(|e| e.day);
+            let mut lines = vec![format!("**{season} schedule** (day within season):")];
+            for e in evs {
+                let lv = e.level.map(|l| format!(" \u{2022} Lv.{l}")).unwrap_or_default();
+                lines.push(format!("Day {} \u{2014} {}{}", e.day, e.title, lv));
+            }
+            lines.join("\n")
+        }
+        None => {
+            let mut lines = vec!["**Sword & Staff schedule** \u{2014} seasons:".to_string()];
+            for s in seasons(&events) {
+                let n = events.iter().filter(|e| e.season == *s).count();
+                lines.push(format!("\u{2022} **{s}** ({n} events)"));
+            }
+            lines.push(format!("Use `{}events S3` to list a season.", ctx.prefix()));
+            lines.join("\n")
+        }
+    };
+    ctx.say(msg).await?;
+    Ok(())
+}
+
+/// List upcoming events. `/next` shows the next one; `/next 3` shows three.
+#[poise::command(slash_command, prefix_command, guild_only)]
+pub async fn next(
+    ctx: Context<'_>,
+    #[description = "How many upcoming events to list (default 1)"] count: Option<u32>,
+) -> Result<(), Error> {
+    // Default to the next single event; clamp so one call can't blow past
+    // Discord's message limit.
+    let want = count.unwrap_or(1).clamp(1, 20) as usize;
+    let (channel_id, _) = ids(&ctx);
+    let prefix = ctx.prefix().to_string();
+    let events_path = ctx.data().events_path.clone();
+    let now = Utc::now();
+
+    let row = {
+        let conn = ctx.data().db.lock().unwrap();
+        db::get_channel(&conn, channel_id)?
+    };
+    let Some(row) = row else {
+        ctx.say(format!("This channel isn't set up yet. Try `{prefix}subscribe`."))
+            .await?;
+        return Ok(());
+    };
+    let (Some(season), Some(start)) = (row.season.clone(), row.start_date_parsed()) else {
+        ctx.say(format!(
+            "No season anchored yet \u{2014} set one with `{prefix}setday S3 20`."
+        ))
+            .await?;
+        return Ok(());
+    };
+
+    let events = match load_events(&events_path) {
+        Ok(e) => e,
+        Err(e) => {
+            ctx.say(format!("\u{274C} Couldn't read the schedule: {e}")).await?;
+            return Ok(());
+        }
+    };
+
+    let items = upcoming_events(&season, start, row.notify_time_parsed(), now, &events, want);
+    if items.is_empty() {
+        ctx.say(format!(
+            "No more events in **{season}** \u{2014} re-anchor when the next season starts."
+        ))
+            .await?;
+        return Ok(());
     }
-    ctx.say(lines.join("\n")).await?;
+
+    let header = if items.len() == 1 {
+        format!("**Next event** in {season}:")
+    } else {
+        format!("**Next {} events** in {season}:", items.len())
+    };
+
+    // Assemble within Discord's 2000-char limit; drop overflow with a note.
+    let mut out = header;
+    let mut shown = 0usize;
+    for u in &items {
+        let block = format!("\n\n{}", format_upcoming(u));
+        if out.len() + block.len() > 1900 {
+            break;
+        }
+        out.push_str(&block);
+        shown += 1;
+    }
+    if shown < items.len() {
+        out.push_str(&format!("\n\n\u{2026}and {} more.", items.len() - shown));
+    }
+
+    ctx.say(out).await?;
     Ok(())
 }
 
@@ -220,11 +305,11 @@ pub async fn list_events(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, prefix_command)]
 pub async fn test(ctx: Context<'_>) -> Result<(), Error> {
     ctx.say(
-        "\u{1F4C5} **Sample reminder \u{2014} Day 3: First Guild War**\n\
-         Save at least 200 gems and hold your summon tickets. \
-         (This is a test; real reminders fire on your schedule.)",
+        "**In 3 days \u{00B7} S3 Day 28**\n\u{2694}\u{FE0F} Abyssal Bastion opens\n\
+         \u{2022} Power to enter \u{2014} Normal 20M \u{00B7} Hard 26M \u{00B7} Nightmare 30M \u{00B7} Purgatory 46M\n\
+         _(This is a test; real reminders fire on your schedule.)_",
     )
-    .await?;
+        .await?;
     Ok(())
 }
 
@@ -233,11 +318,12 @@ pub fn all() -> Vec<poise::Command<crate::Data, Error>> {
     vec![
         subscribe(),
         unsubscribe(),
-        setstart(),
+        setseason(),
         setday(),
         notifytime(),
         status(),
         list_events(),
+        next(),
         test(),
     ]
 }

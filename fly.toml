@@ -1,0 +1,26 @@
+# Fly.io config for the Sword & Staff reminder bot.
+# This is a WORKER app: it holds an outbound Discord gateway connection and runs
+# a scheduler loop. It has no inbound HTTP, so there is no [http_service] block.
+app = "micaelas-memos"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SS_EVENTS_PATH = "/app/events.json"
+  SS_DB_PATH = "/data/ssbot.db"        # persisted on the volume below
+  SS_CHECK_INTERVAL = "60"
+  SS_DEFAULT_NOTIFY_TIME = "13:00"     # UTC; matches daily reset
+  RUST_LOG = "info"
+
+# Persistent SQLite lives here. The volume survives deploys and restarts, which
+# is what makes subscriptions, anchors, and the no-double-send watermarks stick.
+[mounts]
+  source = "ssbot_data"
+  destination = "/data"
+
+# Run only one machine. Multiple machines would violate scheduler integrity
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

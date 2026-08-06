@@ -1,26 +1,966 @@
-[
-  {
-    "day": 0,
-    "title": "Server Launch",
-    "message": "Welcome! Focus your early gems on unlocking your first hero slot.",
-    "notice_days": [0]
-  },
-  {
-    "day": 3,
-    "title": "First Guild War",
-    "message": "Save at least 200 gems and hold your summon tickets \u2014 the war shop restocks today and the early buys give the best value.",
-    "notice_days": [2, 0]
-  },
-  {
-    "day": 7,
-    "title": "Tower of Trials Opens",
-    "message": "Bank your energy potions starting now. Do NOT auto-spend energy this week; you'll want a full stockpile for the day-7 climb.",
-    "notice_days": [3, 1, 0]
-  },
-  {
-    "day": 14,
-    "title": "Limited Hero Banner",
-    "message": "Keep 300+ summon shards in reserve for the two-week banner. Reminder to not spend shards on the standard pool before this.",
-    "notice_days": [5, 1, 0]
-  }
-]
+{
+  "_source": "QY Maple season schedule + EOG roadmap, EXPLICIT (pre-recurrence) schema: every event is a (season, day-in-season) entry; no recurring array. Treasure Hunt + mini-game folded in as explicit weekly entries mapped from EOG cumulative days (S1: qy=eog, S2: -46, S3: -113). S1 is confirmed (your first hunt Jul 3 = S1 day 8 matches EOG); S2+ treasure days are EOG estimates that can drift with your server's season lengths. Void Rifts/Chaos Invasion: S1 Sundays only, phase GUESSED (Void first) - verify and extend for S2+. S4/S5 treasure and tournaments not included.",
+  "events": [
+    {
+      "season": "S1",
+      "kingdom": "Verdantglade",
+      "day": 1,
+      "title": "Auroradrasil",
+      "type": "kingdom",
+      "power": {
+        "hard": "36K"
+      },
+      "note": "Kingdom unlock: keys x3, potions x5, drills x3"
+    },
+    {
+      "season": "S1",
+      "day": 3,
+      "title": "🌀 Void Rifts",
+      "type": "void",
+      "note": "10 attempts within 24h of spawn. 1-5 floors, relic pulls up to Mythic; group play scales  rewards.",
+      "notice_days": [
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "kingdom": "Cinder Ridge",
+      "day": 4,
+      "title": "Mecha Summit",
+      "type": "kingdom",
+      "power": {
+        "hard": "180K"
+      },
+      "note": "Kingdom unlock: keys x4, potions x3, drills x5, sea mines x3"
+    },
+    {
+      "season": "S1",
+      "day": 4,
+      "title": "2nd Class Change",
+      "type": "class",
+      "level": 44,
+      "note": "Player Lv.44 + Class Lv.20 + 1st Class Lv.18 + Cinder Ridge Five",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 8,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Choice Mythic Relic Box (unique relics). F2P: spend banked Aurodrasil Energy this week.",
+      "notice_days": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 10,
+      "title": "⚡ Chaos Invasion",
+      "type": "void",
+      "note": "10 attempts within 24h of spawn.  ",
+      "notice_days": [
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "kingdom": "Aqualis",
+      "day": 12,
+      "title": "Ocean Palace Ruins",
+      "type": "kingdom",
+      "power": {
+        "hard": "580K"
+      },
+      "note": "Aqualis. Server merge groups: 01+02 | 03+04 | 05+06 | 07+08 | 09+10 | 11+12 | 13+14 | 15+16"
+    },
+    {
+      "season": "S1",
+      "day": 12,
+      "title": "3rd Class Change",
+      "type": "class",
+      "level": 82,
+      "note": "Player Lv.82 + Class Lv.48 + 2nd Class Lv.16 + Aqualis Nine. Kingdom unlock: keys x5, potions x2, drills x3, sea mines x6",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 14,
+      "title": "Possible Summer Event",
+      "type": "event",
+      "note": "Rumored 300 Destiny Fruits (EOG, UNCONFIRMED timing). F2P: start hoarding Destiny Fruits now.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 15,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Lucky Statue. Mini-game: Bingo Draw. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 17,
+      "title": "🌀 Void Rifts",
+      "type": "void",
+      "note": "10 attempts within 24h of spawn. 1-5 floors, relic pulls up to Mythic; group play scales  rewards.",
+      "notice_days": [
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 22,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: 3rd Job Skill Fragment x180. Mini-game: Lucky Scratch. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 24,
+      "title": "Aquorigin Shrine",
+      "type": "stage",
+      "level": 100,
+      "power": {
+        "normal": "930K",
+        "hard": "1.45M",
+        "nightmare": "2.05M"
+      },
+      "note": "Player Lv.100 unlocks Season Power"
+    },
+    {
+      "season": "S1",
+      "day": 24,
+      "title": "⚡ Chaos Invasion",
+      "type": "void",
+      "note": "10 attempts within 24h of spawn.  ",
+      "notice_days": [
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 26,
+      "title": "Whaleback Island",
+      "type": "season_map"
+    },
+    {
+      "season": "S1",
+      "day": 29,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Primal Gem. Mini-game: Feneck's Puzzle. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 31,
+      "title": "🌀 Void Rifts",
+      "type": "void",
+      "note": "10 attempts within 24h of spawn. 1-5 floors, relic pulls up to Mythic; group play scales  rewards.",
+      "notice_days": [
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 33,
+      "title": "Hellhold",
+      "type": "stage",
+      "power": {
+        "normal": "2.25M",
+        "hard": "2.75M",
+        "nightmare": "3.9M",
+        "purgatory": "6.2M"
+      },
+      "note": "Hellhold lasts ~2 weeks. S1 lasts ~44-46 days. Server merges alter the days needed to enter Loong Haven."
+    },
+    {
+      "season": "S1",
+      "day": 36,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Choice Mythic Relic Box (unique relics). Mini-game: Bingo Draw. F2P: spend banked Aurodrasil Energy this week.",
+      "notice_days": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 38,
+      "title": "⚡ Chaos Invasion",
+      "type": "void",
+      "note": "10 attempts within 24h of spawn.  ",
+      "notice_days": [
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S1",
+      "day": 43,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Lucky Statue. Mini-game: Lucky Scratch. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "kingdom": "Loong Haven",
+      "day": 1,
+      "title": "Demonseal Gorge",
+      "type": "kingdom",
+      "power": {
+        "hard": "2.35M"
+      },
+      "note": "Loong Haven. Server merge groups: 01+02+03+04 | 05+06+07+08 | 09+10+11+12 | 13+14+15+16"
+    },
+    {
+      "season": "S2",
+      "day": 1,
+      "title": "4th Class Change",
+      "type": "class",
+      "level": 106,
+      "note": "Player Lv.106 + Class Lv.89 + 3rd Class Lv.19 + Loong Haven Five. Kingdom unlock: keys x5, potions x1, drills x1, sea mines x2, cloud key x7",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 1,
+      "title": "Fantomon Adult",
+      "type": "unlock",
+      "level": 108,
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 1,
+      "title": "Demonbind Tower",
+      "type": "unlock",
+      "level": 116,
+      "note": "The Gem Tower, where you can harvest gems",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 4,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: 4th Job Skill Fragment x180. Mini-game: Feneck's Puzzle. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 11,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Primal Gem. Mini-game: Bingo Draw. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 14,
+      "title": "Warlord's Rest",
+      "type": "stage",
+      "level": 130,
+      "power": {
+        "normal": "3.55M",
+        "hard": "5M",
+        "nightmare": "6M"
+      },
+      "note": "Player Lv.130 unlocks Season Power"
+    },
+    {
+      "season": "S2",
+      "day": 18,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Choice Mythic Relic Box (unique relics). Mini-game: Lucky Scratch. F2P: spend banked Aurodrasil Energy this week.",
+      "notice_days": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 25,
+      "title": "The Tower of Babel",
+      "type": "season_map"
+    },
+    {
+      "season": "S2",
+      "day": 25,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Lucky Statue. Mini-game: Feneck's Puzzle. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 27,
+      "title": "Cloudcrest Temple",
+      "type": "stage",
+      "power": {
+        "normal": "6.2M",
+        "hard": "7.7M",
+        "nightmare": "9.8M"
+      }
+    },
+    {
+      "season": "S2",
+      "day": 32,
+      "title": "Relic II",
+      "type": "relic",
+      "note": "Loong Haven second relic Gacha"
+    },
+    {
+      "season": "S2",
+      "day": 32,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: 4th Job Skill Fragment x180. Mini-game: Bingo Draw. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 39,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Primal Gem. Mini-game: Lucky Scratch. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 40,
+      "title": "Bladeshire",
+      "type": "stage",
+      "power": {
+        "normal": "10M",
+        "hard": "12.5M",
+        "nightmare": "15.8M"
+      }
+    },
+    {
+      "season": "S2",
+      "day": 46,
+      "title": "Pandarial",
+      "type": "fantomon",
+      "note": "Panda Fantomon"
+    },
+    {
+      "season": "S2",
+      "day": 46,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Choice Mythic Relic Box (unique relics). Mini-game: Feneck's Puzzle. F2P: spend banked Aurodrasil Energy this week.",
+      "notice_days": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 53,
+      "title": "Celestship",
+      "type": "stage",
+      "power": {
+        "normal": "16.5M",
+        "hard": "20M",
+        "nightmare": "24.5M",
+        "purgatory": "40M"
+      },
+      "note": "Celestship lasts ~3 weeks. S2 lasts ~67 days. Server merges alter the days needed to enter Aethyris."
+    },
+    {
+      "season": "S2",
+      "day": 53,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Lucky Statue. Mini-game: Bingo Draw. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 60,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: 4th Job Skill Fragment x180. Mini-game: Lucky Scratch. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S2",
+      "day": 67,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Primal Gem. Mini-game: Feneck's Puzzle. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "kingdom": "Aethyris",
+      "day": 1,
+      "title": "Crystalline Spiralwood",
+      "type": "kingdom",
+      "power": {
+        "hard": "9M"
+      },
+      "note": "Aethyris. Server merge groups: 01..08 | 09..16"
+    },
+    {
+      "season": "S3",
+      "day": 1,
+      "title": "5th Class Change",
+      "type": "class",
+      "level": 136,
+      "note": "Player Lv.136 + Class Lv.180 + 4th Class Lv.40 + Aethyris Five. Kingdom unlock: keys x5, drills x2, sea mines x2, cloud key x2, hammer x5",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 7,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Choice Mythic Relic Box (unique relics). Mini-game: Bingo Draw. F2P: spend banked Aurodrasil Energy this week.",
+      "notice_days": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 14,
+      "title": "Eternal Blossom Courtyard",
+      "type": "stage",
+      "level": 160,
+      "power": {
+        "normal": "12.5M",
+        "hard": "15M",
+        "nightmare": "18M",
+        "purgatory": "28.5M"
+      },
+      "note": "Player Lv.160 unlocks Season Power"
+    },
+    {
+      "season": "S3",
+      "day": 14,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Lucky Statue / Golden Divine Tree. Mini-game: Lucky Scratch. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 15,
+      "title": "Astral Odyssey",
+      "type": "season_map"
+    },
+    {
+      "season": "S3",
+      "day": 21,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: 5th Job Skill Fragment x180. Mini-game: Feneck's Puzzle. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 28,
+      "title": "Abyssal Bastion",
+      "type": "stage",
+      "power": {
+        "normal": "20M",
+        "hard": "26M",
+        "nightmare": "30M",
+        "purgatory": "46M"
+      }
+    },
+    {
+      "season": "S3",
+      "day": 28,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Primal Gem / Philosopher's Stone. Mini-game: Bingo Draw. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 31,
+      "title": "Relic II",
+      "type": "relic",
+      "note": "Aethyris second relic Gacha"
+    },
+    {
+      "season": "S3",
+      "day": 35,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Choice Mythic Relic Box (unique relics). Mini-game: Lucky Scratch. F2P: spend banked Aurodrasil Energy this week.",
+      "notice_days": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 42,
+      "title": "Courtyard of Purification",
+      "type": "stage",
+      "power": {
+        "normal": "32.5M",
+        "hard": "43M",
+        "nightmare": "50.5M",
+        "purgatory": "75M"
+      }
+    },
+    {
+      "season": "S3",
+      "day": 42,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Lucky Statue / Golden Divine Tree. Mini-game: Feneck's Puzzle. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 46,
+      "title": "Prismatic Astralite",
+      "type": "fantomon",
+      "note": "Fox Fantomon"
+    },
+    {
+      "season": "S3",
+      "day": 49,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: 5th Job Skill Fragment x180. Mini-game: Bingo Draw. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 56,
+      "title": "Temple of Order",
+      "type": "stage",
+      "power": {
+        "normal": "55M",
+        "hard": "65M",
+        "nightmare": "82M",
+        "purgatory": "115M"
+      }
+    },
+    {
+      "season": "S3",
+      "day": 56,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Primal Gem / Philosopher's Stone. Mini-game: Lucky Scratch. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 61,
+      "title": "Relic III",
+      "type": "relic",
+      "note": "Aethyris third relic Gacha"
+    },
+    {
+      "season": "S3",
+      "day": 63,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Choice Mythic Relic Box (unique relics). Mini-game: Feneck's Puzzle. F2P: spend banked Aurodrasil Energy this week.",
+      "notice_days": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 70,
+      "title": "Solar Spire",
+      "type": "stage",
+      "power": {
+        "normal": "84.5M",
+        "hard": "100M",
+        "nightmare": "120M",
+        "purgatory": "180M"
+      }
+    },
+    {
+      "season": "S3",
+      "day": 70,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Lucky Statue / Golden Divine Tree. Mini-game: Bingo Draw. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 77,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: 5th Job Skill Fragment x180. Mini-game: Lucky Scratch. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 84,
+      "title": "Sovereign's Nest",
+      "type": "stage",
+      "power": {
+        "normal": "125M",
+        "hard": "145M",
+        "nightmare": "180M",
+        "purgatory": "250M",
+        "abyss": "350M"
+      },
+      "note": "S3 lasts ~112 days."
+    },
+    {
+      "season": "S3",
+      "day": 84,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Primal Gem / Philosopher's Stone. Mini-game: Feneck's Puzzle. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 91,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Choice Mythic Relic Box (unique relics). Mini-game: Bingo Draw. F2P: spend banked Aurodrasil Energy this week.",
+      "notice_days": [
+        3,
+        1,
+        0
+      ]
+    },
+    {
+      "season": "S3",
+      "day": 98,
+      "title": "💎 Grand Treasure Hunt",
+      "type": "treasure",
+      "note": "Reward: Lucky Statue / Golden Divine Tree. Mini-game: Lucky Scratch. F2P: bank Energy for the next Mythic Relic Box week.",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S4",
+      "kingdom": "Hapadi",
+      "day": 1,
+      "title": "Ingenious Clocktower",
+      "type": "kingdom",
+      "power": {
+        "hard": "27M"
+      },
+      "note": "Hapadi. Server merge groups: 01..16 (all)"
+    },
+    {
+      "season": "S4",
+      "day": 1,
+      "title": "6th Class Change",
+      "type": "class",
+      "level": 172,
+      "note": "Player Lv.172 + Class Lv.280 + 5th Class Lv.50 + Hapadi Nine. Kingdom unlock: keys x5, drills x2, sea mines x2, lego x5",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S4",
+      "day": 1,
+      "title": "Fantomon Resonance",
+      "type": "unlock",
+      "level": 180,
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S4",
+      "day": 14,
+      "title": "Pirate Galleon",
+      "type": "stage",
+      "level": 190,
+      "power": {
+        "normal": "35M",
+        "hard": "48M",
+        "nightmare": "57M",
+        "purgatory": "84M"
+      },
+      "note": "Player Lv.190 unlocks Season Power"
+    },
+    {
+      "season": "S4",
+      "day": 15,
+      "title": "Grotesque Fairground",
+      "type": "season_map"
+    },
+    {
+      "season": "S4",
+      "day": 28,
+      "title": "Leviathan Submersible",
+      "type": "stage",
+      "power": {
+        "normal": "62M",
+        "hard": "72M",
+        "nightmare": "87M",
+        "purgatory": "130M"
+      }
+    },
+    {
+      "season": "S4",
+      "day": 31,
+      "title": "Relic II",
+      "type": "relic",
+      "note": "Hapadi second relic Gacha"
+    },
+    {
+      "season": "S4",
+      "day": 42,
+      "title": "Clockwork Fortress",
+      "type": "stage",
+      "power": {
+        "normal": "91M",
+        "hard": "110M",
+        "nightmare": "135M",
+        "purgatory": "190M"
+      }
+    },
+    {
+      "season": "S4",
+      "day": 56,
+      "title": "Celestial Observatory",
+      "type": "stage",
+      "power": {
+        "normal": "145M",
+        "hard": "175M",
+        "nightmare": "210M",
+        "purgatory": "305M"
+      }
+    },
+    {
+      "season": "S4",
+      "day": 61,
+      "title": "Relic III",
+      "type": "relic",
+      "note": "Hapadi third relic Gacha"
+    },
+    {
+      "season": "S4",
+      "day": 70,
+      "title": "Titan Hot-Air Balloon",
+      "type": "stage",
+      "power": {
+        "normal": "220M",
+        "hard": "256M",
+        "nightmare": "300M",
+        "purgatory": "460M"
+      }
+    },
+    {
+      "season": "S4",
+      "day": 84,
+      "title": "Astral Citadel",
+      "type": "stage",
+      "power": {
+        "normal": "315M",
+        "hard": "365M",
+        "nightmare": "435M",
+        "purgatory": "630M",
+        "abyss": "880M"
+      },
+      "note": "S4 lasts ~109 days."
+    },
+    {
+      "season": "S5",
+      "kingdom": "Ignis",
+      "day": 1,
+      "title": "Glacial Spire",
+      "type": "kingdom",
+      "power": {
+        "hard": "82M"
+      },
+      "note": "Ignis. Kingdom unlock: key x5, ice hammer x3, flame hammer x3"
+    },
+    {
+      "season": "S5",
+      "day": 1,
+      "title": "7th Class Change",
+      "type": "class",
+      "level": 198,
+      "note": "Player Lv.198 + Class Lv.380 + 6th Class Lv.55 + Ignis Six",
+      "notice_days": [
+        0
+      ]
+    },
+    {
+      "season": "S5",
+      "day": 14,
+      "title": "Blackrock Ruins",
+      "type": "stage",
+      "level": 220,
+      "power": {
+        "normal": "110M",
+        "hard": "130M",
+        "nightmare": "156M",
+        "purgatory": "230M"
+      },
+      "note": "Player Lv.220 unlocks Season Power"
+    },
+    {
+      "season": "S5",
+      "day": 15,
+      "title": "Frostfire Voyage",
+      "type": "season_map"
+    },
+    {
+      "season": "S5",
+      "day": 28,
+      "title": "Everfrost Sanctuary",
+      "type": "stage",
+      "power": {
+        "normal": "166M",
+        "hard": "192M",
+        "nightmare": "230M",
+        "purgatory": "350M"
+      }
+    },
+    {
+      "season": "S5",
+      "day": 31,
+      "title": "Relic II",
+      "type": "relic",
+      "note": "Ignis second relic Gacha"
+    },
+    {
+      "season": "S5",
+      "day": 42,
+      "title": "Infernus Throne",
+      "type": "stage",
+      "power": {
+        "normal": "240M",
+        "hard": "280M",
+        "nightmare": "340M",
+        "purgatory": "500M"
+      }
+    },
+    {
+      "season": "S5",
+      "day": 56,
+      "title": "Lunar Palace",
+      "type": "stage",
+      "power": {
+        "normal": "358M",
+        "hard": "415M",
+        "nightmare": "500M",
+        "purgatory": "750M"
+      }
+    },
+    {
+      "season": "S5",
+      "day": 61,
+      "title": "Relic III",
+      "type": "relic",
+      "note": "Ignis third relic Gacha"
+    },
+    {
+      "season": "S5",
+      "day": 70,
+      "title": "Crimson Wedge",
+      "type": "stage",
+      "power": {
+        "normal": "514M",
+        "hard": "588M",
+        "nightmare": "720M",
+        "purgatory": "1.08B"
+      }
+    },
+    {
+      "season": "S5",
+      "day": 84,
+      "title": "Gate of Origin",
+      "type": "stage",
+      "power": {
+        "normal": "680M",
+        "hard": "780M",
+        "nightmare": "950M",
+        "purgatory": "1.36B",
+        "abyss": "2.5B"
+      },
+      "note": "S5 lasts ~109 days."
+    }
+  ]
+}

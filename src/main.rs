@@ -8,6 +8,7 @@ mod db;
 mod events;
 mod reminders;
 mod scheduler;
+mod send_failure;
 
 use std::sync::{Arc, Mutex};
 
@@ -73,11 +74,10 @@ async fn main() -> anyhow::Result<()> {
 
                 // Kick off the background reminder loop.
                 tokio::spawn(scheduler::run(
-                    ctx.clone(),
+                    ctx.http.clone(),
                     db_for_setup.clone(),
                     events_path.clone(),
                     interval,
-                    default_notify,
                 ));
 
                 Ok(Data {
