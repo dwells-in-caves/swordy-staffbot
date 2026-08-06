@@ -2,22 +2,21 @@
 //! differently to *transient* vs *permanent* errors instead of retrying
 //! everything on every tick.
 //!
-//! Background: the scheduler only advances a channel's watermark
-//! (`last_sent_ts`) after a send succeeds. On failure it used to just log and
-//! move on, leaving the watermark untouched — which is correct for a transient
-//! blip (we want to retry) but wrong for a permanent failure, because the next
-//! tick re-selects the same "still due" rows and fails again, forever. That is
-//! what produces the once-a-minute `failed to send reminders` spam.
+//! The scheduler only advances a channel's watermark (`last_sent_ts`) after a
+//! send succeeds. Leaving the watermark untouched on failure is correct for a
+//! transient blip (retryable) but wrong for a permanent failure, since the
+//! next tick re-selects the same "still due" rows and fails again, forever —
+//! producing a once-a-minute `failed to send reminders` spam.
 //!
 //! This module splits failures into three actions:
 //!   * `Retry`         — transient (rate limit, 5xx, network). Leave the
-//!                       watermark alone; next tick tries again. (Old behaviour.)
+//!                       watermark alone; next tick tries again.
 //!   * `AccessLost`    — the channel is permanently unreachable (bot kicked,
 //!                       channel deleted, permissions revoked). Auto-unsubscribe
-//!                       so we stop targeting it.
+//!                       so it stops being targeted.
 //!   * `Undeliverable` — the message itself can't be delivered as built (too
 //!                       long / payload too large). Advance the watermark past
-//!                       this batch so we stop hammering it. NOTE: this *skips*
+//!                       this batch so it stops being retried. This *skips*
 //!                       the batch; the real fix is to chunk oversized messages
 //!                       under Discord's 2000-char limit so they actually send.
 
@@ -37,13 +36,13 @@ use crate::db;
 pub enum SendOutcome {
     /// Transient — retry next tick (do not touch the watermark).
     Retry,
-    /// Channel is gone / we lack access — unsubscribe it.
+    /// Channel is gone or access was lost — unsubscribe it.
     AccessLost,
     /// Message can't be delivered as built — skip this batch.
     Undeliverable,
 }
 
-// --- Discord JSON error codes we care about -----------------------------
+// --- Discord JSON error codes handled here -------------------------------
 // https://discord.com/developers/docs/topics/opcodes-and-status-codes#json
 const UNKNOWN_CHANNEL: isize = 10003;
 const UNKNOWN_GUILD: isize = 10004;
@@ -75,7 +74,7 @@ fn classify_http(http: &HttpError) -> SendOutcome {
             let status = resp.status_code.as_u16();
             let code = resp.error.code;
 
-            // Permanent "we can't reach this channel" cases → unsubscribe.
+            // Permanent "channel unreachable" cases → unsubscribe.
             if matches!(
                 code,
                 UNKNOWN_CHANNEL
@@ -97,8 +96,8 @@ fn classify_http(http: &HttpError) -> SendOutcome {
                 return SendOutcome::Retry;
             }
 
-            // Unknown 4xx: don't assume it's our fault permanently — retry, but
-            // it will be logged with its code by the caller so we can triage.
+            // Unknown 4xx: don't assume it's permanent — retry; the caller
+            // logs the code for triage.
             SendOutcome::Retry
         }
         // Network-level failure (reqwest): transient by nature.
@@ -142,7 +141,7 @@ pub fn handle(
         }
         SendOutcome::Undeliverable => {
             let conn = db.lock().unwrap();
-            // Advance the watermark past this batch so we stop retrying it.
+            // Advance the watermark past this batch so it stops being retried.
             // This SKIPS the batch — chunking is the real fix (see module docs).
             match db::record_sent(&conn, channel_id, latest, next) {
                 Ok(_) => error!(
