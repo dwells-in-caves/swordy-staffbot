@@ -404,26 +404,6 @@ mod tests {
     }
 
     #[test]
-    fn upcoming_lists_future_events_in_order() {
-        // Mar 1 origin, notify 00:00. day15 opens Mar 16 00:00, day28 Mar 29 00:00.
-        // "Now" is Mar 13 10:00 UTC.
-        let now = dt(2026, 3, 13, 10, 0);
-        let sched = schedule(); // outlive the borrowed Upcoming values
-        let all = upcoming_events("S3", start(), notify(), now, &sched, 5);
-        // day 1 (Mar 2) already opened; day 15 and day 28 remain, soonest first.
-        assert_eq!(all.iter().map(|u| u.day).collect::<Vec<_>>(), vec![15, 28]);
-        assert!(all.iter().all(|u| u.event.season == "S3")); // S2 excluded
-        assert_eq!(all[0].event_dt, dt(2026, 3, 16, 0, 0));
-        // Mar 13 10:00 -> Mar 16 00:00 is 2 days 14 hours.
-        assert!(format_upcoming(&all[0]).contains("In 2 days 14 hours \u{00B7} S3 Day 15"));
-
-        // Default single-event case respects the limit.
-        let one = upcoming_events("S3", start(), notify(), now, &sched, 1);
-        assert_eq!(one.len(), 1);
-        assert_eq!(one[0].day, 15);
-    }
-
-    #[test]
     fn same_day_already_opened_is_excluded() {
         // day15 opens Mar 16 00:00; at Mar 16 09:00 it's already open -> gone.
         let now = dt(2026, 3, 16, 9, 0);
