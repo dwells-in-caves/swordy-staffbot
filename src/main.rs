@@ -1,6 +1,5 @@
 //! Entry point for the Sword & Staff reminder bot.
 //!
-//! Run with: `cargo run`
 //! Requires DISCORD_TOKEN in the environment (see config.rs / .env.example).
 
 mod commands;
@@ -10,6 +9,7 @@ mod events;
 mod reminders;
 mod scheduler;
 mod send_failure;
+mod discord_time;
 
 use std::sync::{Arc, Mutex};
 
@@ -30,7 +30,7 @@ pub type Context<'a> = poise::Context<'a, Data, Error>;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    // Honors RUST_LOG (e.g. RUST_LOG=info). Defaults to warn if unset.
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -40,15 +40,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = config::load()?;
 
-    // Open the database once and share it behind a Mutex. Every critical
-    // section is short and synchronous, so this is fine at bot scale.
+    // Every critical section is short and synchronous, so a single
+    // connection behind a Mutex is sufficient.
     let conn = Connection::open(&cfg.db_path)?;
     db::init(&conn)?;
     let database: Arc<Mutex<Connection>> = Arc::new(Mutex::new(conn));
 
-    // Prefix commands need the privileged MESSAGE_CONTENT intent. Enable it in
-    // the Discord Developer Portal for this bot. (Slash commands don't need it,
-    // so you could drop MESSAGE_CONTENT if you only want slash commands.)
+    // Prefix commands require the privileged MESSAGE_CONTENT intent, enabled
+    // in the Discord Developer Portal.
     let intents =
         serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
 
@@ -70,13 +69,11 @@ async fn main() -> anyhow::Result<()> {
         .setup(move |ctx, ready, framework| {
             Box::pin(async move {
                 tracing::info!("logged in as {}", ready.user.name);
-                // Register slash commands globally. (Global registration can
-                // take up to an hour to propagate the first time; for fast
-                // iteration, register per-guild instead.)
+                // Global registration can take up to an hour to propagate
+                // the first time.
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
-                // Kick off the background reminder loop. It only needs the HTTP
-                // client to post messages, so hand it a clone of that.
+                // Kick off the background reminder loop.
                 tokio::spawn(scheduler::run(
                     ctx.http.clone(),
                     db_for_setup.clone(),

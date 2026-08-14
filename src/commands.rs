@@ -1,6 +1,5 @@
-//! Bot commands, defined with poise so each is BOTH a prefix and slash command
-//! from one function. Add a command by writing a `#[poise::command]` function
-//! and adding it to `all()`.
+//! Bot commands, defined with poise so each one is both a prefix command and a
+//! slash command from a single function.
 //!
 //! Season model: a channel is anchored to one season at a time via
 //! `setseason`/`setday`. Admin-only commands use `required_permissions`.
@@ -314,7 +313,7 @@ pub async fn test(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Every command the bot exposes. Add new ones here.
+/// All commands registered with the framework.
 pub fn all() -> Vec<poise::Command<crate::Data, Error>> {
     vec![
         subscribe(),

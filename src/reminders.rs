@@ -1,23 +1,17 @@
 //! Pure scheduling logic for the Sword & Staff reminder bot.
 //!
-//! No Discord dependency, so it is unit-tested in isolation (see the tests at
-//! the bottom).
-//!
-//! Model: events are authored per-season as (season, day-within-season). A
-//! subscribed channel is anchored to ONE season at a time via that season's
-//! start date (the in-game "Telescope Date"). For that channel, an event on
-//! season-day D fires on `season_start + D days`. Because server merges change
-//! how long each season lasts, anchoring per season (rather than one cumulative
-//! day count from launch) keeps the timeline accurate; the admin re-anchors
-//! when a new season begins.
-//!
-//! Each event may carry `notice_days` — how many days early to remind
-//! (`[3,1,0]` => 3 days before, 1 day before, and on the day). Every
-//! (event, offset) pair becomes one Reminder with a concrete UTC fire time.
+//! Core idea: events are defined by *day number since a server opened*
+//! (day 0 = launch day). Each subscribed channel records the real-world date
+//! its server opened (`start`). For that channel, an event on day D happens on
+//! the calendar date `start + D days`. Each event may carry `notice_days`: how
+//! many days early reminders should fire (`[3, 1, 0]` => 3 days before, 1 day
+//! before, and on the day). Every (event, offset) pair becomes one reminder
+//! with a concrete UTC fire time (`notify` time on the relevant date).
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use crate::events::Event;
+use crate::discord_time::{DiscordTimestamp, TsStyle};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reminder {
@@ -56,7 +50,8 @@ pub fn compute_reminders(
         for off in ev.offsets() {
             let idx = ev.day - off;
             if idx < 0 {
-                // Would fire before the season began; skip.
+                // A reminder that would fire before the server opened is
+                // meaningless; skip it.
                 continue;
             }
             let fire_dt = Utc.from_utc_datetime(&(season_start + Duration::days(idx)).and_time(notify));
@@ -95,11 +90,9 @@ pub struct DueBatch {
 /// Split reminders into what to send now, the next upcoming fire, and how far
 /// to fast-forward past deliberately-skipped stale reminders.
 ///
-/// `due` = reminders that have arrived (`<= now`), are unsent (`> last_sent`),
-/// AND are no older than `now - catchup`. Arrived+unsent reminders older than
-/// that are reported via `skip_to` instead of being sent — so when
-/// `last_sent` is `None` (a fresh anchor), we no longer return the entire
-/// past-due history at once.
+/// `due` = reminders whose fire time has arrived (`<= now`) but have not
+/// already been sent (fire time strictly after `last_sent`). Comparing
+/// against `last_sent` makes this safe across restarts and downtime.
 pub fn due_and_next(
     reminders: &[Reminder],
     last_sent: Option<DateTime<Utc>>,
@@ -141,7 +134,18 @@ pub fn format_reminder(r: &Reminder) -> String {
         let unit = if r.offset == 1 { "day" } else { "days" };
         format!("In {} {}", r.offset, unit)
     };
-    let mut s = format!("**{} \u{00B7} {} Day {}**\n{}", when, r.season, r.day, r.headline);
+    // Event open datetime = fire time + the notice offset we subtracted when
+    // scheduling (fire_dt = origin + (day - offset)); recovered here rather
+    // than stored on Reminder.
+    let event_dt = r.fire_dt + Duration::days(r.offset);
+    let mut s = format!(
+        "**{} \u{00B7} {} Day {}** ({})\n{}",
+        when,
+        r.season,
+        r.day,
+        event_dt.discord(TsStyle::LongDate),
+        r.headline,
+    );
     if !r.detail.is_empty() {
         s.push('\n');
         s.push_str(&r.detail);
@@ -163,8 +167,6 @@ pub fn format_batch(reminders: &[Reminder]) -> String {
 /// title/level/power.
 #[derive(Debug, Clone)]
 pub struct Upcoming<'a> {
-    /// Time from `now` until the event opens. Always strictly positive.
-    pub until: Duration,
     /// Day-within-season the event occurs on.
     pub day: i64,
     /// Exact UTC datetime the event opens (season origin + day, at notify time).
@@ -202,7 +204,6 @@ pub fn upcoming_events<'a>(
                 return None;
             }
             Some(Upcoming {
-                until,
                 day: e.day,
                 event_dt,
                 event: e,
@@ -226,29 +227,15 @@ fn plural(n: i64) -> &'static str {
     }
 }
 
-/// Render a strictly-positive duration as days + hours: "5 days 7 hours",
-/// "7 hours", "1 day", or "under an hour". Hours are floored (countdown-style).
-pub fn humanize_until(delta: Duration) -> String {
-    let minutes = delta.num_minutes().max(0);
-    let days = minutes / (24 * 60);
-    let hours = (minutes % (24 * 60)) / 60;
-    match (days, hours) {
-        (0, 0) => "under an hour".to_string(),
-        (0, h) => format!("{h} hour{}", plural(h)),
-        (d, 0) => format!("{d} day{}", plural(d)),
-        (d, h) => format!("{d} day{} {h} hour{}", plural(d), plural(h)),
-    }
-}
-
 /// Render one upcoming event: precise time-until + season day + open datetime,
 /// then the event's own headline and requirement lines.
 pub fn format_upcoming(u: &Upcoming<'_>) -> String {
     let mut s = format!(
-        "**In {} \u{00B7} {} Day {}** ({} UTC)\n{}",
-        humanize_until(u.until),
+        "**In {} \u{00B7} {} Day {}** ({})\n{}",
+        u.event_dt.discord(TsStyle::Relative),
         u.event.season,
         u.day,
-        u.event_dt.format("%Y-%m-%d %H:%M"),
+        u.event_dt.discord(TsStyle::ShortDateTime),
         u.event.headline()
     );
     let detail = u.event.detail();
@@ -434,16 +421,6 @@ mod tests {
         let one = upcoming_events("S3", start(), notify(), now, &sched, 1);
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].day, 15);
-    }
-
-    #[test]
-    fn humanize_covers_days_hours_and_edges() {
-        assert_eq!(humanize_until(Duration::hours(24 * 5 + 7)), "5 days 7 hours");
-        assert_eq!(humanize_until(Duration::hours(7)), "7 hours");
-        assert_eq!(humanize_until(Duration::hours(1)), "1 hour");
-        assert_eq!(humanize_until(Duration::days(3)), "3 days"); // exact -> no hours
-        assert_eq!(humanize_until(Duration::days(1)), "1 day");
-        assert_eq!(humanize_until(Duration::minutes(30)), "under an hour");
     }
 
     #[test]

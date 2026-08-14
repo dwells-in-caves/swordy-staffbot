@@ -1,26 +1,29 @@
 //! Background scheduler: a tokio task that wakes on an interval and, for every
 //! subscribed+anchored channel, sends whatever reminders are due.
 //!
-//! For each channel we recompute the season timeline from
-//! (season, start_date, notify_time) and send what's due since `last_sent_ts`.
-//! `record_sent` advances the watermark so nothing repeats and missed reminders
-//! are caught up after downtime — now BOUNDED by `CATCHUP_DAYS`, so a fresh
-//! anchor or a long outage can't flatten the whole backlog into one message.
+//! Flow each tick:
+//!   1. Load the (small) event schedule once.
+//!   2. For each subscribed channel with a start date:
+//!        - Expand its personal reminder timeline (compute_reminders)
+//!        - Find reminders due since the last sending (due_and_next)
+//!        - Post a single combined message if any are due
+//!        - Persist last_sent_ts and next_ts so reminders are never sent
+//!          twice and so `status` can show the next reminder even across
+//!          restarts.
 //!
 //! The DB guard is always dropped before any `.await` (Discord send / sleep).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
-use chrono::{Duration, Utc}; // CHANGED: added `Duration` for the catch-up window
+use chrono::{Duration, Utc};
 use rusqlite::Connection;
 use serenity::all::{ChannelId, Http};
 use tracing::{error, info, warn};
 
 use crate::db::{self, ChannelRow};
 use crate::events::load_events;
-use crate::send_failure; // CHANGED: new module (needs `mod send_failure;` in main.rs)
-// CHANGED: added chunk_message, DISCORD_MSG_LIMIT, CATCHUP_DAYS
+use crate::send_failure; 
 use crate::reminders::{
     compute_reminders, due_and_next, format_batch, chunk_message, DISCORD_MSG_LIMIT, CATCHUP_DAYS,
 };
@@ -63,21 +66,19 @@ async fn tick(
     let now = Utc::now();
     for row in rows {
         let (Some(season), Some(start)) = (row.season.clone(), row.start_date_parsed()) else {
-            continue; // query guarantees these, but stay defensive
+            continue; // query guarantees these; defensive check
         };
 
-        // CHANGED: bind last_sent once (reused by the skip_to guard below).
+        // Reused below by the skip_to guard.
         let last_sent = row.last_sent_parsed();
         let reminders =
             compute_reminders(&season, start, row.notify_time_parsed(), &events);
 
-        // CHANGED: catch-up cap. `due_and_next` now takes the window and returns
-        // DueBatch { due, next, skip_to } instead of a (due, next) tuple.
         let batch = due_and_next(&reminders, last_sent, now, Duration::days(CATCHUP_DAYS));
 
-        // CHANGED: fast-forward past deliberately-skipped stale reminders, even
-        // when nothing fresh is due (mid-season anchor / long downtime). This is
-        // what clears a null/stale watermark without dumping the backlog.
+        // Fast-forward past deliberately-skipped stale reminders, even when
+        // nothing fresh is due (mid-season anchor / long downtime), so a
+        // stale watermark doesn't dump the whole backlog once it catches up.
         if let Some(skip_ts) = batch.skip_to {
             if last_sent.map_or(true, |ls| skip_ts > ls) {
                 let conn = db.lock().unwrap();
@@ -95,8 +96,9 @@ async fn tick(
         let latest = batch.due.iter().map(|r| r.fire_dt).max().unwrap_or(now);
         let channel = ChannelId::new(row.channel_id as u64);
 
-        // CHANGED: split the batch under Discord's 2000-char limit and send each
-        // piece; stop at the first failure so we don't advance past an unsent part.
+        // Split the batch under Discord's 2000-char limit and send each piece;
+        // stop at the first failure so the watermark isn't advanced past an
+        // unsent part.
         let chunks = chunk_message(&format_batch(&batch.due), DISCORD_MSG_LIMIT);
         let mut failure = None;
         for piece in &chunks {
@@ -119,9 +121,8 @@ async fn tick(
                     "sent reminders"
                 );
             }
-            // CHANGED: was `warn!(... "failed to send reminders")`. Now classify
-            // permanent vs transient (unsubscribe / skip / retry) instead of
-            // blindly retrying the same failure every tick.
+            // Classify the failure as permanent vs transient (unsubscribe /
+            // skip / retry) instead of blindly retrying every tick.
             Some(e) => {
                 send_failure::handle(db, row.channel_id, &e, latest, batch.next);
             }

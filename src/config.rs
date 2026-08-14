@@ -1,7 +1,6 @@
-//! Configuration, loaded from environment variables / a local .env file.
+//! Configuration, loaded from environment variables or a local .env file.
 //!
-//! The bot token is read from the environment and is NEVER hardcoded or logged.
-//! Copy `.env.example` to `.env` and put your token there
+//! The bot token is read from the environment and is never hardcoded or logged.
 
 use anyhow::{anyhow, Context as _, Result};
 use chrono::NaiveTime;
