@@ -10,6 +10,7 @@ mod events;
 mod reminders;
 mod scheduler;
 mod send_failure;
+mod discord_time;
 
 use std::sync::{Arc, Mutex};
 
