@@ -11,6 +11,7 @@
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use crate::events::Event;
+use crate::discord_time::{DiscordTimestamp, TsStyle};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reminder {
@@ -133,7 +134,18 @@ pub fn format_reminder(r: &Reminder) -> String {
         let unit = if r.offset == 1 { "day" } else { "days" };
         format!("In {} {}", r.offset, unit)
     };
-    let mut s = format!("**{} \u{00B7} {} Day {}**\n{}", when, r.season, r.day, r.headline);
+    // Event open datetime = fire time + the notice offset we subtracted when
+    // scheduling (fire_dt = origin + (day - offset)); recovered here rather
+    // than stored on Reminder.
+    let event_dt = r.fire_dt + Duration::days(r.offset);
+    let mut s = format!(
+        "**{} \u{00B7} {} Day {}** ({})\n{}",
+        when,
+        r.season,
+        r.day,
+        event_dt.discord(TsStyle::LongDate),
+        r.headline,
+    );
     if !r.detail.is_empty() {
         s.push('\n');
         s.push_str(&r.detail);
@@ -155,8 +167,6 @@ pub fn format_batch(reminders: &[Reminder]) -> String {
 /// title/level/power.
 #[derive(Debug, Clone)]
 pub struct Upcoming<'a> {
-    /// Time from `now` until the event opens. Always strictly positive.
-    pub until: Duration,
     /// Day-within-season the event occurs on.
     pub day: i64,
     /// Exact UTC datetime the event opens (season origin + day, at notify time).
@@ -194,7 +204,6 @@ pub fn upcoming_events<'a>(
                 return None;
             }
             Some(Upcoming {
-                until,
                 day: e.day,
                 event_dt,
                 event: e,
@@ -218,29 +227,15 @@ fn plural(n: i64) -> &'static str {
     }
 }
 
-/// Render a strictly-positive duration as days + hours: "5 days 7 hours",
-/// "7 hours", "1 day", or "under an hour". Hours are floored (countdown-style).
-pub fn humanize_until(delta: Duration) -> String {
-    let minutes = delta.num_minutes().max(0);
-    let days = minutes / (24 * 60);
-    let hours = (minutes % (24 * 60)) / 60;
-    match (days, hours) {
-        (0, 0) => "under an hour".to_string(),
-        (0, h) => format!("{h} hour{}", plural(h)),
-        (d, 0) => format!("{d} day{}", plural(d)),
-        (d, h) => format!("{d} day{} {h} hour{}", plural(d), plural(h)),
-    }
-}
-
 /// Render one upcoming event: precise time-until + season day + open datetime,
 /// then the event's own headline and requirement lines.
 pub fn format_upcoming(u: &Upcoming<'_>) -> String {
     let mut s = format!(
-        "**In {} \u{00B7} {} Day {}** ({} UTC)\n{}",
-        humanize_until(u.until),
+        "**In {} \u{00B7} {} Day {}** ({})\n{}",
+        u.event_dt.discord(TsStyle::Relative),
         u.event.season,
         u.day,
-        u.event_dt.format("%Y-%m-%d %H:%M"),
+        u.event_dt.discord(TsStyle::ShortDateTime),
         u.event.headline()
     );
     let detail = u.event.detail();
@@ -426,16 +421,6 @@ mod tests {
         let one = upcoming_events("S3", start(), notify(), now, &sched, 1);
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].day, 15);
-    }
-
-    #[test]
-    fn humanize_covers_days_hours_and_edges() {
-        assert_eq!(humanize_until(Duration::hours(24 * 5 + 7)), "5 days 7 hours");
-        assert_eq!(humanize_until(Duration::hours(7)), "7 hours");
-        assert_eq!(humanize_until(Duration::hours(1)), "1 hour");
-        assert_eq!(humanize_until(Duration::days(3)), "3 days"); // exact -> no hours
-        assert_eq!(humanize_until(Duration::days(1)), "1 day");
-        assert_eq!(humanize_until(Duration::minutes(30)), "under an hour");
     }
 
     #[test]
