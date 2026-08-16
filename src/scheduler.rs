@@ -16,17 +16,23 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
-use chrono::{Duration, Utc};
+use chrono::{Duration, TimeZone, Utc}; 
 use rusqlite::Connection;
-use serenity::all::{ChannelId, Http};
+use serenity::all::{ChannelId, CreateAllowedMentions, CreateMessage, Http, RoleId};
 use tracing::{error, info, warn};
 
+use crate::conquest::Slot;
 use crate::db::{self, ChannelRow};
 use crate::events::load_events;
-use crate::send_failure; 
+use crate::send_failure;
 use crate::reminders::{
     compute_reminders, due_and_next, format_batch, chunk_message, DISCORD_MSG_LIMIT, CATCHUP_DAYS,
 };
+
+/// How late (minutes past the configured time) a conquest ping may still fire.
+/// Past this, a missed slot is skipped for the day rather than pinging people
+/// long after the activity started (e.g. after bot downtime).
+const CQ_GRACE_MINUTES: i64 = 60;
 
 pub async fn run(
     http: Arc<Http>,
@@ -66,19 +72,15 @@ async fn tick(
     let now = Utc::now();
     for row in rows {
         let (Some(season), Some(start)) = (row.season.clone(), row.start_date_parsed()) else {
-            continue; // query guarantees these; defensive check
+            continue; // query guarantees these, but stay defensive
         };
-
-        // Reused below by the skip_to guard.
+        
         let last_sent = row.last_sent_parsed();
         let reminders =
             compute_reminders(&season, start, row.notify_time_parsed(), &events);
-
+        
         let batch = due_and_next(&reminders, last_sent, now, Duration::days(CATCHUP_DAYS));
-
-        // Fast-forward past deliberately-skipped stale reminders, even when
-        // nothing fresh is due (mid-season anchor / long downtime), so a
-        // stale watermark doesn't dump the whole backlog once it catches up.
+        
         if let Some(skip_ts) = batch.skip_to {
             if last_sent.map_or(true, |ls| skip_ts > ls) {
                 let conn = db.lock().unwrap();
@@ -95,10 +97,7 @@ async fn tick(
 
         let latest = batch.due.iter().map(|r| r.fire_dt).max().unwrap_or(now);
         let channel = ChannelId::new(row.channel_id as u64);
-
-        // Split the batch under Discord's 2000-char limit and send each piece;
-        // stop at the first failure so the watermark isn't advanced past an
-        // unsent part.
+        
         let chunks = chunk_message(&format_batch(&batch.due), DISCORD_MSG_LIMIT);
         let mut failure = None;
         for piece in &chunks {
@@ -121,12 +120,83 @@ async fn tick(
                     "sent reminders"
                 );
             }
-            // Classify the failure as permanent vs transient (unsubscribe /
-            // skip / retry) instead of blindly retrying every tick.
             Some(e) => {
                 send_failure::handle(db, row.channel_id, &e, latest, batch.next);
             }
         }
     }
+
+    cq_tick(http, db, now).await;
     Ok(())
+}
+
+/// Conquest pass: independent of the season timeline. Each subscribed channel
+/// with a configured slot gets one `@role` ping per day at its UTC time. A
+/// per-day watermark (`cq_*_last_sent`) prevents repeats; `CQ_GRACE_MINUTES`
+/// bounds how late a missed ping may still fire after downtime.
+async fn cq_tick(http: &Arc<Http>, db: &Arc<Mutex<Connection>>, now: chrono::DateTime<Utc>) {
+    let cq_rows: Vec<ChannelRow> = {
+        let conn = db.lock().unwrap();
+        match db::get_cq_channels(&conn) {
+            Ok(rows) => rows,
+            Err(e) => {
+                warn!(error = %e, "could not load conquest channels this tick");
+                return;
+            }
+        }
+    };
+
+    let today = now.date_naive();
+    for row in cq_rows {
+        for slot in Slot::ALL {
+            // A slot is live only once an admin has set a time (which also
+            // ensures the role, so role id is present alongside it).
+            let (Some(time), Some(role_raw)) = (row.cq_time(slot), row.cq_role_id(slot)) else {
+                continue;
+            };
+            if row.cq_last_sent(slot) == Some(today) {
+                continue; // already pinged today
+            }
+            let fire_dt = Utc.from_utc_datetime(&today.and_time(time));
+            // Not yet, or too late to be useful. Skipping without stamping is
+            // harmless: it's a cheap in-memory check with no send.
+            if now < fire_dt || now - fire_dt > Duration::minutes(CQ_GRACE_MINUTES) {
+                continue;
+            }
+
+            let channel = ChannelId::new(row.channel_id as u64);
+            let role_id = RoleId::new(role_raw as u64);
+            let content = format!(
+                "<@&{}> \u{2694}\u{FE0F} **Conquest ({})** \u{2014} time to assemble!",
+                role_raw,
+                slot.label()
+            );
+            // Explicit allowed_mentions so the role actually pings even if it
+            // isn't marked mentionable server-side.
+            let msg = CreateMessage::new()
+                .content(content)
+                .allowed_mentions(CreateAllowedMentions::new().roles(vec![role_id]));
+
+            match channel.send_message(http, msg).await {
+                Ok(_) => {
+                    let conn = db.lock().unwrap();
+                    if let Err(e) = db::record_cq_sent(&conn, row.channel_id, slot, today) {
+                        error!(
+                            error = %e,
+                            channel = row.channel_id,
+                            "failed to record conquest send"
+                        );
+                    }
+                    info!(channel = row.channel_id, slot = slot.label(), "sent conquest ping");
+                }
+                // Reuse the send-failure classifier: a permanently unreachable
+                // channel auto-unsubscribes; transient errors retry next tick
+                // (watermark untouched). `latest`/`next` don't apply to a daily
+                // ping, so pass `now`/`None`.
+                Err(e) => {
+                    send_failure::handle(db, row.channel_id, &e, now, None);
+                }
+            }
+        }
+    }
 }

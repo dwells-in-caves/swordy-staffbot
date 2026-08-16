@@ -231,7 +231,7 @@ fn plural(n: i64) -> &'static str {
 /// then the event's own headline and requirement lines.
 pub fn format_upcoming(u: &Upcoming<'_>) -> String {
     let mut s = format!(
-        "**In {} \u{00B7} {} Day {}** ({})\n{}",
+        "**Upcoming {} \u{00B7} {} Day {}** ({})\n{}",
         u.event_dt.discord(TsStyle::Relative),
         u.event.season,
         u.day,
