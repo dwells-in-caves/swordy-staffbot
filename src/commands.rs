@@ -9,7 +9,9 @@
 //! `{ ... }` block so the guard is dropped before any `.await`.
 
 use chrono::{Duration, NaiveDate, NaiveTime, Utc};
+use serenity::all::RoleId;
 
+use crate::conquest::{self, Slot};
 use crate::events::{load_events, seasons};
 use crate::reminders::{compute_reminders, current_day_in_season, due_and_next, format_upcoming, upcoming_events, CATCHUP_DAYS};
 use crate::{db, Context, Error};
@@ -314,6 +316,110 @@ pub async fn test(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Admin: set the daily UTC time a conquest slot pings, e.g. `/setcqtime early 12:30`.
+///
+/// Ensures the slot's role exists (creating it if needed) and stores both the
+/// role id and the time. The channel must have run `/subscribe` first.
+#[poise::command(slash_command, prefix_command, required_permissions = "MANAGE_GUILD", guild_only)]
+pub async fn setcqtime(
+    ctx: Context<'_>,
+    #[description = "Which conquest slot: early or late"] slot: String,
+    #[description = "Time of day in 24h UTC, HH:MM"] hhmm: String,
+) -> Result<(), Error> {
+    let Some(slot) = Slot::parse(&slot) else {
+        ctx.say("\u{274C} Slot must be `early` or `late`.").await?;
+        return Ok(());
+    };
+    let Ok(t) = NaiveTime::parse_from_str(hhmm.trim(), "%H:%M") else {
+        ctx.say("\u{274C} Please use 24h `HH:MM` UTC, e.g. `12:30`.").await?;
+        return Ok(());
+    };
+    let Some(guild_id) = ctx.guild_id() else {
+        ctx.say("\u{274C} This command only works in a server.").await?;
+        return Ok(());
+    };
+    let (channel_id, _) = ids(&ctx);
+
+    // Conquest is gated behind /subscribe: the channel row must already exist.
+    let row = {
+        let conn = ctx.data().db.lock().unwrap();
+        db::get_channel(&conn, channel_id)?
+    };
+    let Some(row) = row else {
+        ctx.say(format!("\u{274C} Run `{}subscribe` in this channel first.", ctx.prefix()))
+            .await?;
+        return Ok(());
+    };
+
+    // Resolve/create the role without holding the DB lock across the await.
+    let known_role = row.cq_role_id(slot).map(|id| RoleId::new(id as u64));
+    let role_id =
+        conquest::ensure_role(&ctx.serenity_context().http, guild_id, slot, known_role).await?;
+
+    {
+        let conn = ctx.data().db.lock().unwrap();
+        db::set_cq_role_id(&conn, channel_id, slot, role_id.get() as i64)?;
+        db::set_cq_time(&conn, channel_id, slot, Some(t))?;
+    }
+    ctx.say(format!(
+        "\u{2694}\u{FE0F} Conquest **{}** reminder set for **{} UTC**. The **{}** role will be \
+         pinged \u{2014} members can opt in with `{}conquest {}`.",
+        slot.label(),
+        hhmm.trim(),
+        slot.role_name(),
+        ctx.prefix(),
+        slot.label()
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Opt in or out of conquest pings: `/conquest early` or `/conquest late`.
+///
+/// Toggles the slot's role on yourself. The two slots are independent, so you
+/// can hold both.
+#[poise::command(slash_command, prefix_command, guild_only)]
+pub async fn conquest(
+    ctx: Context<'_>,
+    #[description = "Which conquest slot to toggle: early or late"] slot: String,
+) -> Result<(), Error> {
+    let Some(slot) = Slot::parse(&slot) else {
+        ctx.say("\u{274C} Pick `early` or `late`.").await?;
+        return Ok(());
+    };
+    let Some(guild_id) = ctx.guild_id() else {
+        ctx.say("\u{274C} This command only works in a server.").await?;
+        return Ok(());
+    };
+    let (channel_id, _) = ids(&ctx);
+
+    let known_role = {
+        let conn = ctx.data().db.lock().unwrap();
+        db::get_channel(&conn, channel_id)?
+            .and_then(|r| r.cq_role_id(slot))
+            .map(|id| RoleId::new(id as u64))
+    };
+    let role_id =
+        conquest::ensure_role(&ctx.serenity_context().http, guild_id, slot, known_role).await?;
+
+    let Some(member) = ctx.author_member().await else {
+        ctx.say("\u{274C} Couldn't find your membership in this server.").await?;
+        return Ok(());
+    };
+
+    let http = ctx.serenity_context();
+    if member.roles.contains(&role_id) {
+        member.remove_role(http, role_id).await?;
+        ctx.say(format!("\u{1F515} Removed you from **{}** conquest pings.", slot.label()))
+            .await?;
+    } else {
+        member.add_role(http, role_id).await?;
+        ctx.say(format!("\u{2705} You're in \u{2014} you'll be pinged for **{}** conquest.", slot.label()))
+            .await?;
+    }
+    Ok(())
+}
+
 /// Every command the bot exposes. Add new ones here.
 pub fn all() -> Vec<poise::Command<crate::Data, Error>> {
     vec![
@@ -326,5 +432,7 @@ pub fn all() -> Vec<poise::Command<crate::Data, Error>> {
         list_events(),
         next(),
         test(),
+        setcqtime(),
+        conquest(),
     ]
 }

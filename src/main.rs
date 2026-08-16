@@ -5,6 +5,7 @@
 
 mod commands;
 mod config;
+mod conquest;
 mod db;
 mod events;
 mod reminders;
