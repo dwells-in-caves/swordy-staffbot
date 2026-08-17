@@ -1,76 +1,47 @@
 //! Conquest reminders: a group activity that pings a self-assign role at an
 //! admin-configured time of day, independent of the season event schedule.
 //!
-//! There are two slots, `early` and `late`, each backed by its own Discord role
-//! ("CQ Early" / "CQ Late"). Admins set the daily UTC fire time per slot with
-//! `/setcqtime`; users opt in/out with `/conquest`. The scheduler pings the
-//! slot's role once per day at its time (see scheduler.rs).
+//! There are six time-neutral slots, `1`..`6`, each backed by a Discord role
+//! ("CQ_1".."CQ_6"). Admins set a slot's daily UTC fire time with `/setcqtime`;
+//! users opt in/out with `/conquest`; `/cqtimes` lists configured slots. The
+//! scheduler pings a slot's role once per day at its time (see scheduler.rs).
 //!
 //! This module holds the pure `Slot` model plus the one Discord-touching helper
-//! (`ensure_role`). Persistence lives in db.rs (keyed off the column-name
-//! helpers here); the scheduler and commands drive the rest.
+//! (`ensure_role`). Persistence lives in db.rs (the `cq_slots` table); the
+//! scheduler and commands drive the rest.
 
 use serenity::all::{EditRole, GuildId, Http, RoleId};
 
-/// One of the two conquest time slots. Each maps 1:1 to a Discord role and to a
-/// fixed set of `channels` columns.
+/// One conquest time slot, numbered 1..=`COUNT`. Each maps 1:1 to a Discord role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Slot {
-    Early,
-    Late,
-}
+pub struct Slot(u8);
 
 impl Slot {
-    /// Both slots, for iterating in the scheduler.
-    pub const ALL: [Slot; 2] = [Slot::Early, Slot::Late];
+    /// How many slots exist (1..=COUNT).
+    pub const COUNT: u8 = 6;
 
-    /// Parse the user-facing argument (`early` / `late`, case-insensitive).
-    pub fn parse(raw: &str) -> Option<Slot> {
-        match raw.trim().to_lowercase().as_str() {
-            "early" => Some(Slot::Early),
-            "late" => Some(Slot::Late),
-            _ => None,
+    /// Wrap a raw number if it's a valid slot (1..=COUNT).
+    pub fn from_num(n: u8) -> Option<Slot> {
+        if (1..=Self::COUNT).contains(&n) {
+            Some(Slot(n))
+        } else {
+            None
         }
     }
 
-    /// Lower-case label used in user-facing messages.
-    pub fn label(self) -> &'static str {
-        match self {
-            Slot::Early => "early",
-            Slot::Late => "late",
-        }
+    /// Parse the user-facing argument (a number 1..=COUNT).
+    pub fn parse(raw: &str) -> Option<Slot> {
+        raw.trim().parse::<u8>().ok().and_then(Self::from_num)
+    }
+
+    /// The slot number.
+    pub fn num(self) -> u8 {
+        self.0
     }
 
     /// The Discord role name this slot creates / looks up.
-    pub fn role_name(self) -> &'static str {
-        match self {
-            Slot::Early => "CQ Early",
-            Slot::Late => "CQ Late",
-        }
-    }
-
-    // --- channels-table column names (compile-time constants, so they are safe
-    // to interpolate into SQL in db.rs) ---
-
-    pub fn time_col(self) -> &'static str {
-        match self {
-            Slot::Early => "cq_early_time",
-            Slot::Late => "cq_late_time",
-        }
-    }
-
-    pub fn role_col(self) -> &'static str {
-        match self {
-            Slot::Early => "cq_early_role_id",
-            Slot::Late => "cq_late_role_id",
-        }
-    }
-
-    pub fn last_sent_col(self) -> &'static str {
-        match self {
-            Slot::Early => "cq_early_last_sent",
-            Slot::Late => "cq_late_last_sent",
-        }
+    pub fn role_name(self) -> String {
+        format!("CQ_{}", self.0)
     }
 }
 
@@ -97,12 +68,13 @@ pub async fn ensure_role(
         }
     }
 
-    if let Some(role) = roles.values().find(|r| r.name == slot.role_name()) {
+    let name = slot.role_name();
+    if let Some(role) = roles.values().find(|r| r.name == name) {
         return Ok(role.id);
     }
 
     let role = guild_id
-        .create_role(http, EditRole::new().name(slot.role_name()).mentionable(true))
+        .create_role(http, EditRole::new().name(name).mentionable(true))
         .await?;
     Ok(role.id)
 }

@@ -21,8 +21,7 @@ use rusqlite::Connection;
 use serenity::all::{ChannelId, CreateAllowedMentions, CreateMessage, Http, RoleId};
 use tracing::{error, info, warn};
 
-use crate::conquest::Slot;
-use crate::db::{self, ChannelRow};
+use crate::db::{self, ChannelRow, CqSlotRow};
 use crate::events::load_events;
 use crate::send_failure;
 use crate::reminders::{
@@ -130,72 +129,72 @@ async fn tick(
     Ok(())
 }
 
-/// Conquest pass: independent of the season timeline. Each subscribed channel
-/// with a configured slot gets one `@role` ping per day at its UTC time. A
-/// per-day watermark (`cq_*_last_sent`) prevents repeats; `CQ_GRACE_MINUTES`
-/// bounds how late a missed ping may still fire after downtime.
+/// Conquest pass: independent of the season timeline. Each configured slot on a
+/// subscribed channel gets one `@role` ping per day at its UTC time. A per-day
+/// watermark (`cq_slots.last_sent`) prevents repeats; `CQ_GRACE_MINUTES` bounds
+/// how late a missed ping may still fire after downtime.
 async fn cq_tick(http: &Arc<Http>, db: &Arc<Mutex<Connection>>, now: chrono::DateTime<Utc>) {
-    let cq_rows: Vec<ChannelRow> = {
+    let slots: Vec<CqSlotRow> = {
         let conn = db.lock().unwrap();
-        match db::get_cq_channels(&conn) {
+        match db::get_due_cq_slots(&conn) {
             Ok(rows) => rows,
             Err(e) => {
-                warn!(error = %e, "could not load conquest channels this tick");
+                warn!(error = %e, "could not load conquest slots this tick");
                 return;
             }
         }
     };
 
     let today = now.date_naive();
-    for row in cq_rows {
-        for slot in Slot::ALL {
-            // A slot is live only once an admin has set a time (which also
-            // ensures the role, so role id is present alongside it).
-            let (Some(time), Some(role_raw)) = (row.cq_time(slot), row.cq_role_id(slot)) else {
-                continue;
-            };
-            if row.cq_last_sent(slot) == Some(today) {
-                continue; // already pinged today
-            }
-            let fire_dt = Utc.from_utc_datetime(&today.and_time(time));
-            // Not yet, or too late to be useful. Skipping without stamping is
-            // harmless: it's a cheap in-memory check with no send.
-            if now < fire_dt || now - fire_dt > Duration::minutes(CQ_GRACE_MINUTES) {
-                continue;
-            }
+    for slot in slots {
+        // A slot's role id is set alongside its time; skip if either is missing.
+        let (Some(time), Some(role_raw)) = (slot.time(), slot.role_id) else {
+            continue;
+        };
+        if slot.last_sent_date() == Some(today) {
+            continue; // already pinged today
+        }
+        let fire_dt = Utc.from_utc_datetime(&today.and_time(time));
+        // Not yet, or too late to be useful. Skipping without stamping is
+        // harmless: it's a cheap in-memory check with no send.
+        if now < fire_dt || now - fire_dt > Duration::minutes(CQ_GRACE_MINUTES) {
+            continue;
+        }
 
-            let channel = ChannelId::new(row.channel_id as u64);
-            let role_id = RoleId::new(role_raw as u64);
-            let content = format!(
-                "<@&{}> \u{2694}\u{FE0F} **Conquest ({})** \u{2014} time to assemble!",
-                role_raw,
-                slot.label()
-            );
-            // Explicit allowed_mentions so the role actually pings even if it
-            // isn't marked mentionable server-side.
-            let msg = CreateMessage::new()
-                .content(content)
-                .allowed_mentions(CreateAllowedMentions::new().roles(vec![role_id]));
+        let channel = ChannelId::new(slot.channel_id as u64);
+        let role_id = RoleId::new(role_raw as u64);
+        let content = format!(
+            "<@&{}> \u{2694}\u{FE0F} **Conquest** \u{2014} time to assemble!",
+            role_raw
+        );
+        // Explicit allowed_mentions so the role actually pings even if it
+        // isn't marked mentionable server-side.
+        let msg = CreateMessage::new()
+            .content(content)
+            .allowed_mentions(CreateAllowedMentions::new().roles(vec![role_id]));
 
-            match channel.send_message(http, msg).await {
-                Ok(_) => {
-                    let conn = db.lock().unwrap();
-                    if let Err(e) = db::record_cq_sent(&conn, row.channel_id, slot, today) {
-                        error!(
-                            error = %e,
-                            channel = row.channel_id,
-                            "failed to record conquest send"
-                        );
-                    }
-                    info!(channel = row.channel_id, slot = slot.label(), "sent conquest ping");
+        match channel.send_message(http, msg).await {
+            Ok(_) => {
+                let conn = db.lock().unwrap();
+                if let Err(e) = db::record_cq_sent(&conn, slot.channel_id, slot.slot, today) {
+                    error!(
+                        error = %e,
+                        channel = slot.channel_id,
+                        "failed to record conquest send"
+                    );
                 }
-                // Reuse the send-failure classifier: a permanently unreachable
-                // channel auto-unsubscribes; transient errors retry next tick
-                // (watermark untouched). `latest`/`next` don't apply to a daily
-                // ping, so pass `now`/`None`.
-                Err(e) => {
-                    send_failure::handle(db, row.channel_id, &e, now, None);
-                }
+                info!(
+                    channel = slot.channel_id,
+                    slot = slot.slot.num() as u64,
+                    "sent conquest ping"
+                );
+            }
+            // Reuse the send-failure classifier: a permanently unreachable
+            // channel auto-unsubscribes; transient errors retry next tick
+            // (watermark untouched). `latest`/`next` don't apply to a daily
+            // ping, so pass `now`/`None`.
+            Err(e) => {
+                send_failure::handle(db, slot.channel_id, &e, now, None);
             }
         }
     }

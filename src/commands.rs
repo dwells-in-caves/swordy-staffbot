@@ -315,18 +315,20 @@ pub async fn test(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Admin: set the daily UTC time a conquest slot pings, e.g. `/setcqtime early 12:30`.
+/// Admin: set the daily UTC time a conquest slot pings, e.g. `/setcqtime 1 12:30`.
 ///
-/// Ensures the slot's role exists (creating it if needed) and stores both the
-/// role id and the time. The channel must have run `/subscribe` first.
+/// Slot is a number 1\u{2013}6. Ensures the slot's role ("CQ_1".."CQ_6") exists,
+/// creating it if needed, and stores both the role id and the time. The channel
+/// must have run `/subscribe` first.
 #[poise::command(slash_command, prefix_command, required_permissions = "MANAGE_GUILD", guild_only)]
 pub async fn setcqtime(
     ctx: Context<'_>,
-    #[description = "Which conquest slot: early or late"] slot: String,
+    #[description = "Which conquest slot: a number 1-6"] slot: String,
     #[description = "Time of day in 24h UTC, HH:MM"] hhmm: String,
 ) -> Result<(), Error> {
     let Some(slot) = Slot::parse(&slot) else {
-        ctx.say("\u{274C} Slot must be `early` or `late`.").await?;
+        ctx.say(format!("\u{274C} Slot must be a number from 1 to {}.", Slot::COUNT))
+            .await?;
         return Ok(());
     };
     let Ok(t) = NaiveTime::parse_from_str(hhmm.trim(), "%H:%M") else {
@@ -340,50 +342,54 @@ pub async fn setcqtime(
     let (channel_id, _) = ids(&ctx);
 
     // Conquest is gated behind /subscribe: the channel row must already exist.
-    let row = {
+    // Also grab any role already stored for this slot so we don't recreate it.
+    let (row_exists, known_role) = {
         let conn = ctx.data().db.lock().unwrap();
-        db::get_channel(&conn, channel_id)?
+        let exists = db::get_channel(&conn, channel_id)?.is_some();
+        let known = db::get_cq_slot(&conn, channel_id, slot)?
+            .and_then(|s| s.role_id)
+            .map(|id| RoleId::new(id as u64));
+        (exists, known)
     };
-    let Some(row) = row else {
+    if !row_exists {
         ctx.say(format!("\u{274C} Run `{}subscribe` in this channel first.", ctx.prefix()))
             .await?;
         return Ok(());
-    };
+    }
 
     // Resolve/create the role without holding the DB lock across the await.
-    let known_role = row.cq_role_id(slot).map(|id| RoleId::new(id as u64));
     let role_id =
         conquest::ensure_role(&ctx.serenity_context().http, guild_id, slot, known_role).await?;
 
     {
         let conn = ctx.data().db.lock().unwrap();
-        db::set_cq_role_id(&conn, channel_id, slot, role_id.get() as i64)?;
-        db::set_cq_time(&conn, channel_id, slot, Some(t))?;
+        db::upsert_cq_slot(&conn, channel_id, slot, t, role_id.get() as i64)?;
     }
     ctx.say(format!(
-        "\u{2694}\u{FE0F} Conquest **{}** reminder set for **{} UTC**. The **{}** role will be \
+        "\u{2694}\u{FE0F} Conquest slot **{}** set for **{} UTC**. The **{}** role will be \
          pinged \u{2014} members can opt in with `{}conquest {}`.",
-        slot.label(),
+        slot.num(),
         hhmm.trim(),
         slot.role_name(),
         ctx.prefix(),
-        slot.label()
+        slot.num()
     ))
     .await?;
     Ok(())
 }
 
-/// Opt in or out of conquest pings: `/conquest early` or `/conquest late`.
+/// Opt in or out of conquest pings: `/conquest 1` through `/conquest 6`.
 ///
-/// Toggles the slot's role on yourself. The two slots are independent, so you
-/// can hold both.
+/// Toggles that slot's role on yourself. Slots are independent, so you can hold
+/// as many as you like.
 #[poise::command(slash_command, prefix_command, guild_only)]
 pub async fn conquest(
     ctx: Context<'_>,
-    #[description = "Which conquest slot to toggle: early or late"] slot: String,
+    #[description = "Which conquest slot to toggle: a number 1-6"] slot: String,
 ) -> Result<(), Error> {
     let Some(slot) = Slot::parse(&slot) else {
-        ctx.say("\u{274C} Pick `early` or `late`.").await?;
+        ctx.say(format!("\u{274C} Pick a slot number from 1 to {}.", Slot::COUNT))
+            .await?;
         return Ok(());
     };
     let Some(guild_id) = ctx.guild_id() else {
@@ -394,8 +400,8 @@ pub async fn conquest(
 
     let known_role = {
         let conn = ctx.data().db.lock().unwrap();
-        db::get_channel(&conn, channel_id)?
-            .and_then(|r| r.cq_role_id(slot))
+        db::get_cq_slot(&conn, channel_id, slot)?
+            .and_then(|s| s.role_id)
             .map(|id| RoleId::new(id as u64))
     };
     let role_id =
@@ -409,17 +415,36 @@ pub async fn conquest(
     let http = ctx.serenity_context();
     if member.roles.contains(&role_id) {
         member.remove_role(http, role_id).await?;
-        ctx.say(format!("\u{1F515} Removed you from **{}** conquest pings.", slot.label()))
+        ctx.say(format!("\u{1F515} Removed you from **conquest slot {}** pings.", slot.num()))
             .await?;
     } else {
         member.add_role(http, role_id).await?;
-        ctx.say(format!("\u{2705} You're in \u{2014} you'll be pinged for **{}** conquest.", slot.label()))
+        ctx.say(format!("\u{2705} You're in \u{2014} you'll be pinged for **conquest slot {}**.", slot.num()))
             .await?;
     }
     Ok(())
 }
 
-/// Every command the bot exposes. Add new ones here.
+/// List this channel's configured conquest slots and their UTC times.
+#[poise::command(slash_command, prefix_command, guild_only)]
+pub async fn cqtimes(ctx: Context<'_>) -> Result<(), Error> {
+    let (channel_id, _) = ids(&ctx);
+    let slots = {
+        let conn = ctx.data().db.lock().unwrap();
+        db::get_cq_slots_for_channel(&conn, channel_id)?
+    };
+    if slots.is_empty() {
+        ctx.say("No conquest times are configured for this channel.").await?;
+        return Ok(());
+    }
+    let mut lines = vec!["\u{2694}\u{FE0F} **Conquest times (UTC):**".to_string()];
+    for s in &slots {
+        lines.push(format!("\u{2022} Slot **{}** \u{2014} {}", s.slot.num(), s.notify_time));
+    }
+    ctx.say(lines.join("\n")).await?;
+    Ok(())
+}
+
 /// All commands registered with the framework.
 pub fn all() -> Vec<poise::Command<crate::Data, Error>> {
     vec![
@@ -434,5 +459,6 @@ pub fn all() -> Vec<poise::Command<crate::Data, Error>> {
         test(),
         setcqtime(),
         conquest(),
+        cqtimes(),
     ]
 }
